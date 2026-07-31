@@ -1156,7 +1156,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div class="logo-icon">📱</div>
       <div>
         <div class="logo-text">Durian<span>SMS</span></div>
-        <div style="font-size:10px;color:var(--text2)">v3.2</div>
+        <div style="font-size:10px;color:var(--text2)">Build By Shanto</div>
       </div>
     </div>
     <div class="sidebar-nav">
@@ -1288,7 +1288,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div class="page" id="page-recharge">
         <div class="page-header">
           <div class="page-title">💳 Balance Recharge</div>
-          <div class="page-sub">Add balance via bKash — approved within 1–6 hours</div>
+          <div class="page-sub">Add balance via bKash — approved within 1–6 Minute Please wait Thank You</div>
         </div>
         <div class="recharge-grid">
           <!-- Left -->
@@ -1306,8 +1306,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <div class="rate-grid">
                 <div class="rate-chip"><div class="rate-chip-val">130৳</div><div class="rate-chip-label">Per 1 USD</div></div>
                 <div class="rate-chip"><div class="rate-chip-val">2.50৳</div><div class="rate-chip-label">Fee per ৳100</div></div>
-                <div class="rate-chip"><div class="rate-chip-val">$5</div><div class="rate-chip-label">Minimum</div></div>
-                <div class="rate-chip"><div class="rate-chip-val">$50</div><div class="rate-chip-label">Maximum</div></div>
+                <div class="rate-chip"><div class="rate-chip-val">$2.5</div><div class="rate-chip-label">Minimum</div></div>
+                <div class="rate-chip"><div class="rate-chip-val">$100</div><div class="rate-chip-label">Maximum</div></div>
               </div>
               <div style="background:var(--surface);border-radius:var(--radius3);padding:10px 12px;font-size:11px;color:var(--text2);line-height:1.7">
                 ⚠️ Example: $10 = ৳1300 base + ৳32.50 fee = <strong style="color:var(--accent)">৳1332.50 total</strong>
@@ -1317,8 +1317,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div class="card">
               <div class="card-title">📱 bKash Number</div>
               <div class="bkash-box">
-                <div class="bkash-title">💗 Send Money to</div>
-                <div class="bkash-number">01XXXXXXXXXX</div>
+                <div class="bkash-title">Only Send Money to</div>
+                <div class="bkash-number">01610257165</div>
                 <div class="bkash-note">⚠️ Use <strong>Send Money</strong> only.<br>Submit TrxID below after sending.</div>
               </div>
             </div>
@@ -1328,7 +1328,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div>
             <div class="card" style="margin-bottom:18px">
               <div class="card-title">🧮 Calculator & Submit</div>
-              <label class="form-label">USD Amount ($5 – $50)</label>
+              <label class="form-label">USD Amount ($1 – $50)</label>
               <input type="number" class="form-input" id="bkash-amount-usd" placeholder="e.g. 10" min="5" max="50" step="1" oninput="calcRecharge()" style="margin-bottom:6px">
               <div class="input-hint">Enter USD amount — we'll calculate BDT to send.</div>
 
@@ -1343,7 +1343,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <label class="form-label">bKash TrxID</label>
               <input type="text" class="form-input" id="bkash-txnid" placeholder="e.g. 8C5GH2XVYA" style="margin-bottom:10px" autocomplete="off">
               <label class="form-label">Your bKash Number</label>
-              <input type="tel" class="form-input" id="bkash-phone" placeholder="01XXXXXXXXXX" style="margin-bottom:14px" autocomplete="tel">
+              <input type="tel" class="form-input" id="bkash-phone" placeholder="01610257165" style="margin-bottom:14px" autocomplete="tel">
               <button class="btn-primary" id="bkash-btn" type="button" onclick="submitRecharge()" disabled>✅ Submit Recharge Request</button>
               <div class="input-hint" style="margin-top:8px">⚠️ Same TrxID cannot be used twice. Enter USD amount above to enable submit.</div>
             </div>
