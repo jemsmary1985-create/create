@@ -46,13 +46,13 @@ let proxyHealth = {}; // idx -> { ok: bool, fails: 0 }
 
 const PID = { fb: 521, wa: 6058 };
 const COUNTRY_MAP = { '1': 'USA', '2': 'Canada' };
-const NUMBER_COST = 0.17;
+const NUMBER_COST = 0.15;
 const ADMIN_EMAILS = ['admin@duriansms.com'];
 const RECHARGE = {
-  rate: 130,
-  minUSD: 5,
-  maxUSD: 50,
-  networkFeePerHundred: 2.50
+  rate: 129.31,
+  minUSD: 2.5,
+  maxUSD: 100,
+  networkFeePerHundred: 2.00
 };
 
 let currentUser = null;
@@ -1227,7 +1227,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
                 <input type="number" class="form-input" id="fb-qty" value="1" min="1" max="10">
               </div>
             </div>
-            <div class="cost-chip">💰 $0.17 per number</div>
+            <div class="cost-chip">💰 $0.15 per number</div>
             <button class="btn-primary fb-btn" onclick="getNumber('fb')" id="fb-btn">📘 Get Facebook Number</button>
             <div class="result-box" id="fb-result"></div>
           </div>
@@ -1304,13 +1304,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div class="card" style="margin-bottom:18px">
               <div class="card-title">📊 Rate & Limits</div>
               <div class="rate-grid">
-                <div class="rate-chip"><div class="rate-chip-val">130৳</div><div class="rate-chip-label">Per 1 USD</div></div>
-                <div class="rate-chip"><div class="rate-chip-val">2.50৳</div><div class="rate-chip-label">Fee per ৳100</div></div>
-                <div class="rate-chip"><div class="rate-chip-val">$2.5</div><div class="rate-chip-label">Minimum</div></div>
+                <div class="rate-chip"><div class="rate-chip-val">129.31৳</div><div class="rate-chip-label">Per 1 USD</div></div>
+                <div class="rate-chip"><div class="rate-chip-val">2.00৳</div><div class="rate-chip-label">Fee per ৳100</div></div>
+                <div class="rate-chip"><div class="rate-chip-val">$2.50</div><div class="rate-chip-label">Minimum</div></div>
                 <div class="rate-chip"><div class="rate-chip-val">$100</div><div class="rate-chip-label">Maximum</div></div>
               </div>
               <div style="background:var(--surface);border-radius:var(--radius3);padding:10px 12px;font-size:11px;color:var(--text2);line-height:1.7">
-                ⚠️ Example: $10 = ৳1300 base + ৳32.50 fee = <strong style="color:var(--accent)">৳1332.50 total</strong>
+                ⚠️ Example: $10 = ৳1,293.1 base + ৳20 fee = <strong style="color:var(--accent)">৳1,313.1 total</strong>
               </div>
             </div>
 
@@ -1328,7 +1328,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div>
             <div class="card" style="margin-bottom:18px">
               <div class="card-title">🧮 Calculator & Submit</div>
-              <label class="form-label">USD Amount ($1 – $50)</label>
+              <label class="form-label">USD Amount ($5 – $50)</label>
               <input type="number" class="form-input" id="bkash-amount-usd" placeholder="e.g. 10" min="5" max="50" step="1" oninput="calcRecharge()" style="margin-bottom:6px">
               <div class="input-hint">Enter USD amount — we'll calculate BDT to send.</div>
 
