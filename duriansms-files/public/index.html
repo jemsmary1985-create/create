@@ -446,6 +446,14 @@ async function _doRelease(phone, pid) {
     else showToast(`Release: ${res?.msg || 'done'}`, 'warning');
   } catch(e) { showToast('Release API error (cleaned locally): ' + e.message, 'warning'); }
 
+  // FIX: refund balance if OTP was never received for this number
+  const active = activeNumbers.find(n => n.phone === phone);
+  const otpNotReceived = active ? active.status !== 'received' : true;
+  if (otpNotReceived) {
+    await refundBalance(1);
+    showToast(`$${NUMBER_COST.toFixed(2)} refunded (no OTP received).`, 'info');
+  }
+
   // Always clean up locally
   activeNumbers = activeNumbers.filter(n => n.phone !== phone);
   const h = smsHistory.find(n => n.phone === phone && n.status !== 'released');
