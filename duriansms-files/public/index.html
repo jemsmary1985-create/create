@@ -44,7 +44,7 @@ const FALLBACK_PROXIES = [
 let activeProxyIdx = -1;
 let proxyHealth = {}; // idx -> { ok: bool, fails: 0 }
 
-const PID = { fb: 290, wa: 291 };
+const PID = { fb: 521, wa: 6058 };
 const COUNTRY_MAP = { '1': 'USA', '2': 'Canada' };
 const NUMBER_COST = 0.17;
 const ADMIN_EMAILS = ['admin@duriansms.com'];
@@ -331,7 +331,7 @@ window.getNumber = async function(service) {
     showToast(`$${totalCost} deducted.`, 'info');
     btn.innerHTML = `<span class="loader"></span> Fetching…`;
 
-    const res = await durianCall('getPhoneNum', { pid, num: qty, noblack: 1, serial: Date.now() });
+    const res = await durianCall('getMobile', { pid, num: qty, noblack: 1, serial: 1 });
 
     if (res.code === 200 && res.data) {
       const phones = Array.isArray(res.data) ? res.data : [res.data];
@@ -387,7 +387,7 @@ function startOtpPolling(phone, pid, service) {
 async function fetchOTP(phone, pid, service) {
   const key = phone.replace(/\D/g,'');
   try {
-    const res = await durianCall('getMsg', { pid, pn: phone, serial: Date.now() });
+    const res = await durianCall('getMsg', { pid, pn: phone, serial: 1 });
     if (res.code === 200 && res.data) {
       const otp = String(res.data).trim();
       if (!otp) return;
@@ -441,7 +441,7 @@ async function _doRelease(phone, pid) {
   if (refreshTimers['_t_' + key]) { clearTimeout(refreshTimers['_t_' + key]); delete refreshTimers['_t_' + key]; }
 
   try {
-    const res = await durianCall('releaseNum', { pid, pn: phone });
+    const res = await durianCall('passMobile', { pid, pn: phone, serial: 1 });
     if (res && res.code === 200) showToast(`${phone} released.`, 'success');
     else showToast(`Release: ${res?.msg || 'done'}`, 'warning');
   } catch(e) { showToast('Release API error (cleaned locally): ' + e.message, 'warning'); }
@@ -461,7 +461,7 @@ window.releaseNumber = async function(phone, pid) {
 window.addToBlacklist = async function(phone, pid) {
   if (!confirm(`Blacklist and release ${phone}?`)) return;
   try {
-    await durianCall('blackNum', { pid, pn: phone });
+    await durianCall('addBlack', { pid, pn: phone });
     showToast(`${phone} blacklisted.`, 'success');
   } catch(e) { showToast('Blacklist API error: ' + e.message, 'warning'); }
   // FIX: call internal _doRelease, not releaseNumber (avoids double confirm)
