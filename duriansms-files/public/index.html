@@ -44,8 +44,9 @@ const FALLBACK_PROXIES = [
 let activeProxyIdx = -1;
 let proxyHealth = {}; // idx -> { ok: bool, fails: 0 }
 
-const PID = { fb: 290, wa: 291 };
-const COUNTRY_MAP = { '1': 'USA', '2': 'Canada' };
+const PID = { fb: 521, wa: 6058 };
+const SERIAL = { fb: 1, wa: 2 }; // 1: multiple, 2: single (must match project type, and stay consistent across getMobile/getMsg/passMobile calls)
+const COUNTRY_MAP = { '1': 'USA' };
 const NUMBER_COST = 0.17;
 const ADMIN_EMAILS = ['admin@duriansms.com'];
 const RECHARGE = {
@@ -310,6 +311,7 @@ async function recordSmsReceived() {
 window.getNumber = async function(service) {
   if (!currentUser) return showToast('Please log in first!', 'error');
   const pid = service === 'fb' ? PID.fb : PID.wa;
+  const serial = service === 'fb' ? SERIAL.fb : SERIAL.wa;
   const country = document.getElementById(`${service}-country`).value;
   const qty = Math.min(10, Math.max(1, parseInt(document.getElementById(`${service}-qty`).value) || 1));
   const countryName = COUNTRY_MAP[country] || 'USA';
@@ -331,7 +333,7 @@ window.getNumber = async function(service) {
     showToast(`$${totalCost} deducted.`, 'info');
     btn.innerHTML = `<span class="loader"></span> Fetching…`;
 
-    const res = await durianCall('getPhoneNum', { pid, num: qty, noblack: 1, serial: Date.now() });
+    const res = await durianCall('getMobile', { pid, num: qty, noblack: 1, serial });
 
     if (res.code === 200 && res.data) {
       const phones = Array.isArray(res.data) ? res.data : [res.data];
@@ -340,7 +342,7 @@ window.getNumber = async function(service) {
       phones.forEach(phone => {
         const entry = {
           id: Date.now() + Math.random(),
-          service, pid, phone, country, countryName, label,
+          service, pid, serial, phone, country, countryName, label,
           otp: '', status: 'waiting',
           time: new Date().toLocaleTimeString(),
           uid: currentUser.uid
@@ -352,7 +354,7 @@ window.getNumber = async function(service) {
       saveState(); renderHistory(); renderActiveList();
       resultEl.innerHTML = buildResultHTML(phones, service, countryName);
       resultEl.classList.add('show');
-      phones.forEach(phone => startOtpPolling(phone, pid, service));
+      phones.forEach(phone => startOtpPolling(phone, pid, service, serial));
     } else {
       // API returned error — refund
       if (deducted) await refundBalance(qty);
@@ -372,22 +374,28 @@ window.getNumber = async function(service) {
 };
 
 // ── OTP POLLING ──
-function startOtpPolling(phone, pid, service) {
+function startOtpPolling(phone, pid, service, serial) {
   const key = phone.replace(/\D/g,'');
   if (refreshTimers[key]) clearInterval(refreshTimers[key]);
   // FIX: immediate fetch after 2s, then every 10s
   const timerId = setTimeout(() => {
-    fetchOTP(phone, pid, service);
-    refreshTimers[key] = setInterval(() => fetchOTP(phone, pid, service), 10000);
+    fetchOTP(phone, pid, service, serial);
+    refreshTimers[key] = setInterval(() => fetchOTP(phone, pid, service, serial), 10000);
   }, 2000);
   // Store the timeout id under a temp key so we can cancel it
   refreshTimers['_t_' + key] = timerId;
 }
 
-async function fetchOTP(phone, pid, service) {
+async function fetchOTP(phone, pid, service, serial) {
   const key = phone.replace(/\D/g,'');
+  // Fall back to the serial stored on the active-number entry if not passed in
+  // (e.g. when polling is restarted on page reload via initApp)
+  if (serial === undefined) {
+    const active = activeNumbers.find(n => n.phone === phone);
+    serial = active ? active.serial : (service === 'fb' ? SERIAL.fb : SERIAL.wa);
+  }
   try {
-    const res = await durianCall('getMsg', { pid, pn: phone, serial: Date.now() });
+    const res = await durianCall('getMsg', { pid, pn: phone, serial });
     if (res.code === 200 && res.data) {
       const otp = String(res.data).trim();
       if (!otp) return;
@@ -441,7 +449,9 @@ async function _doRelease(phone, pid) {
   if (refreshTimers['_t_' + key]) { clearTimeout(refreshTimers['_t_' + key]); delete refreshTimers['_t_' + key]; }
 
   try {
-    const res = await durianCall('releaseNum', { pid, pn: phone });
+    const active0 = activeNumbers.find(n => n.phone === phone);
+    const serial0 = active0 ? active0.serial : (pid === PID.fb ? SERIAL.fb : SERIAL.wa);
+    const res = await durianCall('passMobile', { pid, pn: phone, serial: serial0 });
     if (res && res.code === 200) showToast(`${phone} released.`, 'success');
     else showToast(`Release: ${res?.msg || 'done'}`, 'warning');
   } catch(e) { showToast('Release API error (cleaned locally): ' + e.message, 'warning'); }
@@ -461,7 +471,7 @@ window.releaseNumber = async function(phone, pid) {
 window.addToBlacklist = async function(phone, pid) {
   if (!confirm(`Blacklist and release ${phone}?`)) return;
   try {
-    await durianCall('blackNum', { pid, pn: phone });
+    await durianCall('addBlack', { pid, pn: phone });
     showToast(`${phone} blacklisted.`, 'success');
   } catch(e) { showToast('Blacklist API error: ' + e.message, 'warning'); }
   // FIX: call internal _doRelease, not releaseNumber (avoids double confirm)
@@ -881,7 +891,7 @@ function initApp() {
   // Restart polling for persisted active numbers
   activeNumbers.forEach(n => {
     if (n.status !== 'received' && n.status !== 'released') {
-      startOtpPolling(n.phone, n.pid, n.service);
+      startOtpPolling(n.phone, n.pid, n.service, n.serial);
     }
   });
   navigate('numbers');
@@ -1193,7 +1203,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div class="page active" id="page-numbers">
         <div class="page-header">
           <div class="page-title">📱 Get Activation Numbers</div>
-          <div class="page-sub">Facebook & WhatsApp OTP numbers — USA & Canada</div>
+          <div class="page-sub">Facebook & WhatsApp OTP numbers — USA</div>
         </div>
 
         <div class="services-grid">
@@ -1203,15 +1213,14 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <div class="service-logo fb">📘</div>
               <div>
                 <div class="service-name">Facebook Activation</div>
-                <div class="service-desc">USA & Canada OTP numbers</div>
+                <div class="service-desc">USA OTP numbers</div>
               </div>
             </div>
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label">Country</label>
-                <select class="form-select" id="fb-country">
+                <select class="form-select" id="fb-country" disabled>
                   <option value="1">🇺🇸 United States</option>
-                  <option value="2">🇨🇦 Canada</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1230,15 +1239,14 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <div class="service-logo wa">💬</div>
               <div>
                 <div class="service-name">WhatsApp Activation</div>
-                <div class="service-desc">USA & Canada OTP numbers</div>
+                <div class="service-desc">USA OTP numbers</div>
               </div>
             </div>
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label">Country</label>
-                <select class="form-select" id="wa-country">
+                <select class="form-select" id="wa-country" disabled>
                   <option value="1">🇺🇸 United States</option>
-                  <option value="2">🇨🇦 Canada</option>
                 </select>
               </div>
               <div class="form-group">
