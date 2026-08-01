@@ -332,7 +332,7 @@ window.getNumber = async function(service) {
     showToast(`$${totalCost} deducted.`, 'info');
     btn.innerHTML = `<span class="loader"></span> Fetching…`;
 
-    const res = await durianCall('getMobile', { pid, num: qty, noblack: 1, serial });
+    const res = await durianCall('getMobile', { pid, cuy: 'us', num: qty, noblack: 1, serial });
 
     if (res.code === 200 && res.data) {
       const phones = Array.isArray(res.data) ? res.data : [res.data];
