@@ -50,8 +50,8 @@ const NUMBER_COST = 0.17;
 const ADMIN_EMAILS = ['admin@duriansms.com'];
 const RECHARGE = {
   rate: 130,
-  minUSD: 5,
-  maxUSD: 50,
+  minUSD: 2,
+  maxUSD: 100,
   networkFeePerHundred: 2.50
 };
 
@@ -1141,8 +1141,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div class="auth-logo-sub">Premium Activation Panel</div>
     </div>
     <div class="auth-tabs">
-      <div class="auth-tab tab-active" id="tab-login" onclick="showLoginTab()">🔑 Login</div>
-      <div class="auth-tab" id="tab-register" onclick="showRegisterTab()">✨ Register</div>
+      <div class="auth-tab tab-active" id="tab-login" onclick="showLoginTab()">Login</div>
+      <div class="auth-tab" id="tab-register" onclick="showRegisterTab()">Register</div>
     </div>
     <div id="auth-error" class="auth-error"></div>
     <div class="auth-form active" id="auth-login">
@@ -1150,7 +1150,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <input type="email" class="auth-input" id="login-email" placeholder="Enter your email" autocomplete="email">
       <label class="auth-label">Password</label>
       <input type="password" class="auth-input" id="login-pass" placeholder="Enter your password" autocomplete="current-password" onkeydown="if(event.key==='Enter')handleLogin()">
-      <button class="btn-primary" type="button" onclick="handleLogin()">🔑 Login</button>
+      <button class="btn-primary" type="button" onclick="handleLogin()">Login</button>
       <div class="auth-hint">No account? <span style="color:var(--accent);cursor:pointer" onclick="showRegisterTab()">Register here</span></div>
     </div>
     <div class="auth-form" id="auth-register">
@@ -1162,7 +1162,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <input type="password" class="auth-input" id="reg-pass" placeholder="At least 6 characters" autocomplete="new-password">
       <label class="auth-label">Confirm Password</label>
       <input type="password" class="auth-input" id="reg-pass2" placeholder="Re-enter password" autocomplete="new-password" onkeydown="if(event.key==='Enter')handleRegister()">
-      <button class="btn-primary" type="button" onclick="handleRegister()">✨ Create Account</button>
+      <button class="btn-primary" type="button" onclick="handleRegister()">Create Account</button>
       <div class="auth-hint">Already registered? <span style="color:var(--accent);cursor:pointer" onclick="showLoginTab()">Login here</span></div>
     </div>
   </div>
@@ -1239,7 +1239,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <div class="form-group">
                 <label class="form-label">Country</label>
                 <select class="form-select" id="fb-country" disabled>
-                  <option value="1">🇺🇸 United States</option>
+                  <option value="1">United States</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1248,7 +1248,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               </div>
             </div>
             <div class="cost-chip">💰 $0.17 per number</div>
-            <button class="btn-primary fb-btn" onclick="getNumber('fb')" id="fb-btn">📘 Get Facebook Number</button>
+            <button class="btn-primary fb-btn" onclick="getNumber('fb')" id="fb-btn">📘 Get Number</button>
             <div class="result-box" id="fb-result"></div>
           </div>
 
@@ -1265,7 +1265,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <div class="form-group">
                 <label class="form-label">Country</label>
                 <select class="form-select" id="wa-country" disabled>
-                  <option value="1">🇺🇸 United States</option>
+                  <option value="1">United States</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1274,7 +1274,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               </div>
             </div>
             <div class="cost-chip">💰 $0.17 per number</div>
-            <button class="btn-primary wa-btn" onclick="getNumber('wa')" id="wa-btn">💬 Get WhatsApp Number</button>
+            <button class="btn-primary wa-btn" onclick="getNumber('wa')" id="wa-btn">💬 Get Number</button>
             <div class="result-box" id="wa-result"></div>
           </div>
         </div>
@@ -1282,7 +1282,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <!-- Active Numbers -->
         <div class="active-panel" style="margin-bottom:22px">
           <div class="active-panel-title">
-            <span>⚡ Active Numbers</span>
+            <span>Active Numbers</span>
             <div class="auto-badge"><span class="pulse"></span> Auto-refresh ON</div>
           </div>
           <div id="active-list"><div class="empty-hint">No active numbers yet. Get a number above!</div></div>
@@ -1291,7 +1291,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <!-- History Table -->
         <div class="table-wrap">
           <div class="table-header">
-            <div class="table-title">📋 History</div>
+            <div class="table-title">History</div>
             <button class="btn-outline" style="color:var(--red);border-color:rgba(244,63,94,0.3)" onclick="clearHistory()">🗑 Clear</button>
           </div>
           <div style="overflow-x:auto">
@@ -1306,7 +1306,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <!-- ══ RECHARGE PAGE ══ -->
       <div class="page" id="page-recharge">
         <div class="page-header">
-          <div class="page-title">💳 Balance Recharge</div>
+          <div class="page-title">Balance Recharge</div>
           <div class="page-sub">Add balance via bKash — approved within 1–6 hours</div>
         </div>
         <div class="recharge-grid">
@@ -1317,16 +1317,16 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
                 <div class="balance-hero-val" id="recharge-balance">$0.00</div>
                 <div class="balance-hero-label">Current Balance</div>
               </div>
-              <div class="cost-chip" style="margin-bottom:0">💰 $0.17 per number</div>
+              <div class="cost-chip" style="margin-bottom:0">$0.17 per number</div>
             </div>
 
             <div class="card" style="margin-bottom:18px">
-              <div class="card-title">📊 Rate & Limits</div>
+              <div class="card-title">Rate & Limits</div>
               <div class="rate-grid">
                 <div class="rate-chip"><div class="rate-chip-val">130৳</div><div class="rate-chip-label">Per 1 USD</div></div>
                 <div class="rate-chip"><div class="rate-chip-val">2.50৳</div><div class="rate-chip-label">Fee per ৳100</div></div>
-                <div class="rate-chip"><div class="rate-chip-val">$5</div><div class="rate-chip-label">Minimum</div></div>
-                <div class="rate-chip"><div class="rate-chip-val">$50</div><div class="rate-chip-label">Maximum</div></div>
+                <div class="rate-chip"><div class="rate-chip-val">$2</div><div class="rate-chip-label">Minimum</div></div>
+                <div class="rate-chip"><div class="rate-chip-val">$100</div><div class="rate-chip-label">Maximum</div></div>
               </div>
               <div style="background:var(--surface);border-radius:var(--radius3);padding:10px 12px;font-size:11px;color:var(--text2);line-height:1.7">
                 ⚠️ Example: $10 = ৳1300 base + ৳32.50 fee = <strong style="color:var(--accent)">৳1332.50 total</strong>
@@ -1334,9 +1334,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             </div>
 
             <div class="card">
-              <div class="card-title">📱 bKash Number</div>
+              <div class="card-title">bKash Number</div>
               <div class="bkash-box">
-                <div class="bkash-title">💗 Send Money to</div>
+                <div class="bkash-title">Send Money to</div>
                 <div class="bkash-number">01610257165</div>
                 <div class="bkash-note">⚠️ Use <strong>Send Money</strong> only.<br>Submit TrxID below after sending.</div>
               </div>
@@ -1346,8 +1346,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <!-- Right -->
           <div>
             <div class="card" style="margin-bottom:18px">
-              <div class="card-title">🧮 Calculator & Submit</div>
-              <label class="form-label">USD Amount ($5 – $50)</label>
+              <div class="card-title">Calculator & Submit</div>
+              <label class="form-label">USD Amount ($2 – $50)</label>
               <input type="number" class="form-input" id="bkash-amount-usd" placeholder="e.g. 10" min="5" max="50" step="1" oninput="calcRecharge()" style="margin-bottom:6px">
               <div class="input-hint">Enter USD amount — we'll calculate BDT to send.</div>
 
@@ -1368,7 +1368,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             </div>
 
             <div class="card">
-              <div class="card-title">📋 My Recharge History</div>
+              <div class="card-title">My Recharge History</div>
               <div style="overflow-x:auto">
                 <table class="tbl">
                   <thead><tr><th>Date</th><th>USD</th><th>BDT</th><th>Total BDT</th><th>TrxID</th><th>Status</th></tr></thead>
@@ -1383,7 +1383,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <!-- ══ ADMIN PAGE ══ -->
       <div class="page" id="page-admin">
         <div class="page-header">
-          <div class="page-title">👑 Admin Panel</div>
+          <div class="page-title">Admin Panel</div>
           <div class="page-sub">Manage users and recharge requests</div>
         </div>
         <div class="admin-warning">⚠️ Admins only — all actions are logged.</div>
@@ -1405,7 +1405,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div class="card" style="margin-bottom:22px">
           <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
             <span>💳 Recharge Requests</span>
-            <button class="btn-outline" onclick="loadPendingRecharges()">🔄 Refresh</button>
+            <button class="btn-outline" onclick="loadPendingRecharges()">Refresh</button>
           </div>
           <div style="overflow-x:auto">
             <table class="tbl">
@@ -1419,7 +1419,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div class="card">
           <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
             <span>👥 All Users</span>
-            <button class="btn-outline" onclick="loadAllUsers()">🔄 Refresh</button>
+            <button class="btn-outline" onclick="loadAllUsers()">Refresh</button>
           </div>
           <div style="overflow-x:auto">
             <table class="tbl">
