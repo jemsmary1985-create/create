@@ -332,10 +332,22 @@ window.getNumber = async function(service) {
     showToast(`$${totalCost} deducted.`, 'info');
     btn.innerHTML = `<span class="loader"></span> Fetching…`;
 
-    const res = await durianCall('getMobile', { pid, num: qty, noblack: 1, serial });
+    const res = await durianCall('getMobile', { pid, cuy: 1, num: qty, noblack: 1, serial });
 
     if (res.code === 200 && res.data) {
       const phones = Array.isArray(res.data) ? res.data : [res.data];
+
+      // Safety net: verify every number actually starts with the US dialing
+      // code (+1). If the upstream API ever ignores the cuy filter and hands
+      // back a wrong-country number, don't silently accept it — refund and
+      // surface the problem instead of charging for an unusable number.
+      const wrongCountry = phones.filter(p => !p.replace(/\s/g,'').startsWith('+1'));
+      if (wrongCountry.length) {
+        if (deducted) await refundBalance(qty);
+        showToast(`Got non-USA number(s) from provider (${wrongCountry.join(', ')}). Balance refunded — please try again.`, 'error');
+        return;
+      }
+
       showToast(`${phones.length} ${label} number(s) received! ✅`, 'success');
 
       phones.forEach(phone => {
