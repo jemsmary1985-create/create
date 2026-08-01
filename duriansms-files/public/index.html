@@ -45,7 +45,6 @@ let activeProxyIdx = -1;
 let proxyHealth = {}; // idx -> { ok: bool, fails: 0 }
 
 const PID = { fb: 521, wa: 6058 };
-const SERIAL = { fb: 1, wa: 2 }; // 1: multiple, 2: single (must match project type, and stay consistent across getMobile/getMsg/passMobile calls)
 const COUNTRY_MAP = { '1': 'USA' };
 const NUMBER_COST = 0.17;
 const ADMIN_EMAILS = ['admin@duriansms.com'];
@@ -311,9 +310,9 @@ async function recordSmsReceived() {
 window.getNumber = async function(service) {
   if (!currentUser) return showToast('Please log in first!', 'error');
   const pid = service === 'fb' ? PID.fb : PID.wa;
-  const serial = service === 'fb' ? SERIAL.fb : SERIAL.wa;
   const country = document.getElementById(`${service}-country`).value;
   const qty = Math.min(10, Math.max(1, parseInt(document.getElementById(`${service}-qty`).value) || 1));
+  const serial = qty > 1 ? 1 : 2; // 1 = multiple numbers requested (array response), 2 = single number requested
   const countryName = COUNTRY_MAP[country] || 'USA';
   const label = service === 'fb' ? 'Facebook' : 'WhatsApp';
   const totalCost = (NUMBER_COST * qty).toFixed(2);
@@ -392,7 +391,7 @@ async function fetchOTP(phone, pid, service, serial) {
   // (e.g. when polling is restarted on page reload via initApp)
   if (serial === undefined) {
     const active = activeNumbers.find(n => n.phone === phone);
-    serial = active ? active.serial : (service === 'fb' ? SERIAL.fb : SERIAL.wa);
+    serial = active ? active.serial : 2; // default to single-number format if we can't find the original request
   }
   try {
     const res = await durianCall('getMsg', { pid, pn: phone, serial });
@@ -450,7 +449,7 @@ async function _doRelease(phone, pid) {
 
   try {
     const active0 = activeNumbers.find(n => n.phone === phone);
-    const serial0 = active0 ? active0.serial : (pid === PID.fb ? SERIAL.fb : SERIAL.wa);
+    const serial0 = active0 ? active0.serial : 2; // default to single-number format if we can't find the original request
     const res = await durianCall('passMobile', { pid, pn: phone, serial: serial0 });
     if (res && res.code === 200) showToast(`${phone} released.`, 'success');
     else showToast(`Release: ${res?.msg || 'done'}`, 'warning');
