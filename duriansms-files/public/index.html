@@ -44,15 +44,15 @@ const FALLBACK_PROXIES = [
 let activeProxyIdx = -1;
 let proxyHealth = {}; // idx -> { ok: bool, fails: 0 }
 
-const PID = { fb: 521, wa: 6058 };
+const PID = { fb: 290, wa: 291 };
 const COUNTRY_MAP = { '1': 'USA', '2': 'Canada' };
-const NUMBER_COST = 0.15;
+const NUMBER_COST = 0.17;
 const ADMIN_EMAILS = ['admin@duriansms.com'];
 const RECHARGE = {
-  rate: 129.31,
-  minUSD: 2.5,
-  maxUSD: 100,
-  networkFeePerHundred: 2.00
+  rate: 130,
+  minUSD: 5,
+  maxUSD: 50,
+  networkFeePerHundred: 2.50
 };
 
 let currentUser = null;
@@ -331,7 +331,7 @@ window.getNumber = async function(service) {
     showToast(`$${totalCost} deducted.`, 'info');
     btn.innerHTML = `<span class="loader"></span> Fetching…`;
 
-    const res = await durianCall('getMobile', { pid, num: qty, noblack: 1, serial: 1 });
+    const res = await durianCall('getPhoneNum', { pid, num: qty, noblack: 1, serial: Date.now() });
 
     if (res.code === 200 && res.data) {
       const phones = Array.isArray(res.data) ? res.data : [res.data];
@@ -387,7 +387,7 @@ function startOtpPolling(phone, pid, service) {
 async function fetchOTP(phone, pid, service) {
   const key = phone.replace(/\D/g,'');
   try {
-    const res = await durianCall('getMsg', { pid, pn: phone, serial: 1 });
+    const res = await durianCall('getMsg', { pid, pn: phone, serial: Date.now() });
     if (res.code === 200 && res.data) {
       const otp = String(res.data).trim();
       if (!otp) return;
@@ -441,18 +441,10 @@ async function _doRelease(phone, pid) {
   if (refreshTimers['_t_' + key]) { clearTimeout(refreshTimers['_t_' + key]); delete refreshTimers['_t_' + key]; }
 
   try {
-    const res = await durianCall('passMobile', { pid, pn: phone, serial: 1 });
+    const res = await durianCall('releaseNum', { pid, pn: phone });
     if (res && res.code === 200) showToast(`${phone} released.`, 'success');
     else showToast(`Release: ${res?.msg || 'done'}`, 'warning');
   } catch(e) { showToast('Release API error (cleaned locally): ' + e.message, 'warning'); }
-
-  // FIX: refund balance if OTP was never received for this number
-  const active = activeNumbers.find(n => n.phone === phone);
-  const otpNotReceived = active ? active.status !== 'received' : true;
-  if (otpNotReceived) {
-    await refundBalance(1);
-    showToast(`$${NUMBER_COST.toFixed(2)} refunded (no OTP received).`, 'info');
-  }
 
   // Always clean up locally
   activeNumbers = activeNumbers.filter(n => n.phone !== phone);
@@ -469,7 +461,7 @@ window.releaseNumber = async function(phone, pid) {
 window.addToBlacklist = async function(phone, pid) {
   if (!confirm(`Blacklist and release ${phone}?`)) return;
   try {
-    await durianCall('addBlack', { pid, pn: phone });
+    await durianCall('blackNum', { pid, pn: phone });
     showToast(`${phone} blacklisted.`, 'success');
   } catch(e) { showToast('Blacklist API error: ' + e.message, 'warning'); }
   // FIX: call internal _doRelease, not releaseNumber (avoids double confirm)
@@ -1156,7 +1148,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div class="logo-icon">📱</div>
       <div>
         <div class="logo-text">Durian<span>SMS</span></div>
-        <div style="font-size:10px;color:var(--text2)">Build By Shanto</div>
+        <div style="font-size:10px;color:var(--text2)">v3.2</div>
       </div>
     </div>
     <div class="sidebar-nav">
@@ -1227,7 +1219,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
                 <input type="number" class="form-input" id="fb-qty" value="1" min="1" max="10">
               </div>
             </div>
-            <div class="cost-chip">💰 $0.15 per number</div>
+            <div class="cost-chip">💰 $0.17 per number</div>
             <button class="btn-primary fb-btn" onclick="getNumber('fb')" id="fb-btn">📘 Get Facebook Number</button>
             <div class="result-box" id="fb-result"></div>
           </div>
@@ -1288,7 +1280,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div class="page" id="page-recharge">
         <div class="page-header">
           <div class="page-title">💳 Balance Recharge</div>
-          <div class="page-sub">Add balance via bKash — approved within 1–6 Minute Please wait Thank You</div>
+          <div class="page-sub">Add balance via bKash — approved within 1–6 hours</div>
         </div>
         <div class="recharge-grid">
           <!-- Left -->
@@ -1304,21 +1296,21 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div class="card" style="margin-bottom:18px">
               <div class="card-title">📊 Rate & Limits</div>
               <div class="rate-grid">
-                <div class="rate-chip"><div class="rate-chip-val">129.31৳</div><div class="rate-chip-label">Per 1 USD</div></div>
-                <div class="rate-chip"><div class="rate-chip-val">2.00৳</div><div class="rate-chip-label">Fee per ৳100</div></div>
-                <div class="rate-chip"><div class="rate-chip-val">$2.50</div><div class="rate-chip-label">Minimum</div></div>
-                <div class="rate-chip"><div class="rate-chip-val">$100</div><div class="rate-chip-label">Maximum</div></div>
+                <div class="rate-chip"><div class="rate-chip-val">130৳</div><div class="rate-chip-label">Per 1 USD</div></div>
+                <div class="rate-chip"><div class="rate-chip-val">2.50৳</div><div class="rate-chip-label">Fee per ৳100</div></div>
+                <div class="rate-chip"><div class="rate-chip-val">$5</div><div class="rate-chip-label">Minimum</div></div>
+                <div class="rate-chip"><div class="rate-chip-val">$50</div><div class="rate-chip-label">Maximum</div></div>
               </div>
               <div style="background:var(--surface);border-radius:var(--radius3);padding:10px 12px;font-size:11px;color:var(--text2);line-height:1.7">
-                ⚠️ Example: $10 = ৳1,293.1 base + ৳20 fee = <strong style="color:var(--accent)">৳1,313.1 total</strong>
+                ⚠️ Example: $10 = ৳1300 base + ৳32.50 fee = <strong style="color:var(--accent)">৳1332.50 total</strong>
               </div>
             </div>
 
             <div class="card">
               <div class="card-title">📱 bKash Number</div>
               <div class="bkash-box">
-                <div class="bkash-title">Only Send Money to</div>
-                <div class="bkash-number">01610257165</div>
+                <div class="bkash-title">💗 Send Money to</div>
+                <div class="bkash-number">01XXXXXXXXXX</div>
                 <div class="bkash-note">⚠️ Use <strong>Send Money</strong> only.<br>Submit TrxID below after sending.</div>
               </div>
             </div>
@@ -1343,7 +1335,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <label class="form-label">bKash TrxID</label>
               <input type="text" class="form-input" id="bkash-txnid" placeholder="e.g. 8C5GH2XVYA" style="margin-bottom:10px" autocomplete="off">
               <label class="form-label">Your bKash Number</label>
-              <input type="tel" class="form-input" id="bkash-phone" placeholder="01610257165" style="margin-bottom:14px" autocomplete="tel">
+              <input type="tel" class="form-input" id="bkash-phone" placeholder="01XXXXXXXXXX" style="margin-bottom:14px" autocomplete="tel">
               <button class="btn-primary" id="bkash-btn" type="button" onclick="submitRecharge()" disabled>✅ Submit Recharge Request</button>
               <div class="input-hint" style="margin-top:8px">⚠️ Same TrxID cannot be used twice. Enter USD amount above to enable submit.</div>
             </div>
