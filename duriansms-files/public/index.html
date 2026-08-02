@@ -288,17 +288,38 @@ async function checkAndDeductBalance(qty) {
   return cost;
 }
 
-async function refundBalance(qty) {
+// FIX: Refund happens directly and automatically every single time a
+// number is released without an OTP — no limit, no admin approval step.
+// Uses the same runTransaction pattern as the deduct (which already works
+// reliably), plus a couple of retries in case of a brief network hiccup.
+async function refundBalance(qty, reason) {
   if (!currentUser) return;
-  try {
-    await updateDoc(doc(db, 'users', currentUser.uid), {
-      balance: increment(NUMBER_COST * qty),
-      totalNumbers: increment(-qty)
-    });
-  } catch(e) {
-    console.error('Refund failed:', e);
-    showToast('⚠️ Refund may have failed. Contact support.', 'error');
+  const amount = +(NUMBER_COST * qty).toFixed(2);
+  const ref = doc(db, 'users', currentUser.uid);
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists()) throw new Error('User data not found.');
+        tx.update(ref, { balance: increment(amount), totalNumbers: increment(-qty) });
+      });
+      return; // success
+    } catch(e) {
+      lastErr = e;
+      console.error(`Refund attempt ${attempt} failed:`, e);
+      if (attempt < 3) await new Promise(r => setTimeout(r, 600 * attempt));
+    }
   }
+  // All attempts failed — this means Firestore Security Rules are blocking
+  // the write. Fix: in Firebase Console → Firestore Database → Rules, make
+  // sure the "users" collection allows a signed-in user to update their own
+  // balance/totalNumbers fields, e.g.:
+  //   match /users/{uid} {
+  //     allow update: if request.auth.uid == uid;
+  //   }
+  console.error('Refund failed after retries:', lastErr);
+  showToast(`⚠️ $${amount.toFixed(2)} refund failed (permissions). Ask the site owner to check Firestore rules.`, 'error');
 }
 
 async function recordSmsReceived() {
@@ -343,7 +364,7 @@ window.getNumber = async function(service) {
       // surface the problem instead of charging for an unusable number.
       const wrongCountry = phones.filter(p => !p.replace(/\s/g,'').startsWith('+1'));
       if (wrongCountry.length) {
-        if (deducted) await refundBalance(qty);
+        if (deducted) await refundBalance(qty, 'Wrong country from provider');
         showToast(`Got non-USA number(s) from provider (${wrongCountry.join(', ')}). Balance refunded — please try again.`, 'error');
         return;
       }
@@ -368,12 +389,12 @@ window.getNumber = async function(service) {
       phones.forEach(phone => startOtpPolling(phone, pid, service, serial));
     } else {
       // API returned error — refund
-      if (deducted) await refundBalance(qty);
+      if (deducted) await refundBalance(qty, 'API error: ' + (res.msg || 'unknown'));
       showToast(`API Error: ${res.msg || 'Could not get number'}. Balance refunded.`, 'error');
     }
   } catch(e) {
     if (deducted && !e.message.includes('Insufficient')) {
-      await refundBalance(qty);
+      await refundBalance(qty, 'Request error: ' + e.message);
       showToast(`Error: ${e.message}. Balance refunded.`, 'error');
     } else {
       showToast(e.message, 'error');
@@ -471,7 +492,7 @@ async function _doRelease(phone, pid) {
   const active = activeNumbers.find(n => n.phone === phone);
   const otpNotReceived = active ? active.status !== 'received' : true;
   if (otpNotReceived) {
-    await refundBalance(1);
+    await refundBalance(1, 'No OTP received');
     showToast(`$${NUMBER_COST.toFixed(2)} refunded (no OTP received).`, 'info');
   }
 
@@ -622,7 +643,9 @@ window.submitRecharge = async function() {
       name: currentUserData?.name || '',
       email: currentUser.email,
       txnId, amountUSD: usd, baseBDT, networkFee, totalBDT,
-      bkashPhone: phone, status: 'pending', createdAt: serverTimestamp()
+      bkashPhone: phone, status: 'pending', createdAt: serverTimestamp(),
+      methodName: selectedPaymentMethod?.name || 'bKash',
+      methodNumber: selectedPaymentMethod?.number || ''
     });
     showToast('✅ Request submitted! Balance added after approval.', 'success');
     document.getElementById('bkash-txnid').value = '';
@@ -671,7 +694,103 @@ async function loadMyRechargeHistory() {
 // ── ADMIN ──
 async function loadAdminPanel() {
   if (!isAdmin) { showToast('Admins only!','error'); navigate('numbers'); return; }
-  await Promise.all([loadPendingRecharges(), loadAllUsers()]);
+  await Promise.all([loadPendingRecharges(), loadAllUsers(), loadPaymentMethods()]);
+}
+
+// ── PAYMENT METHODS (admin-managed, shown on Recharge page) ──
+async function loadPaymentMethods() {
+  const wrap = document.getElementById('admin-payment-methods');
+  if (!wrap) return;
+  try {
+    const snap = await getDocs(query(collection(db,'paymentMethods'), orderBy('order','asc')));
+    if (snap.empty) { wrap.innerHTML = '<div class="empty-hint">No payment methods yet. Add one below.</div>'; renderRechargePaymentMethods([]); return; }
+    const methods = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    wrap.innerHTML = methods.map(m => `
+      <div class="pm-row">
+        <img src="${esc(m.iconUrl||'')}" onerror="this.style.display='none'" class="pm-icon">
+        <div style="flex:1">
+          <div style="font-weight:700;font-size:13px">${esc(m.name)}</div>
+          <div style="font-size:11px;color:var(--text2)">${esc(m.number||'')}</div>
+        </div>
+        <span class="status-pill ${m.active===false?'status-released':'status-received'}">${m.active===false?'Inactive':'Active'}</span>
+        <button class="btn-sm" onclick="togglePaymentMethod('${m.id}',${m.active===false})">${m.active===false?'Enable':'Disable'}</button>
+        <button class="btn-sm danger" onclick="deletePaymentMethod('${m.id}')">🗑</button>
+      </div>`).join('');
+    renderRechargePaymentMethods(methods.filter(m => m.active !== false));
+  } catch(e) { wrap.innerHTML = `<div class="empty-hint">Error: ${esc(e.message)}</div>`; }
+}
+
+window.addPaymentMethod = async function() {
+  if (!isAdmin) return;
+  const name = prompt('Payment method name (e.g. bKash, Nagad, Rocket, Bank):');
+  if (!name) return;
+  const number = prompt('Account / number to send to:');
+  if (!number) return;
+  const iconUrl = prompt('Icon URL (image link, optional — leave blank for default):', 'https://');
+  try {
+    const snap = await getDocs(collection(db,'paymentMethods'));
+    await addDoc(collection(db,'paymentMethods'), {
+      name, number, iconUrl: iconUrl && iconUrl !== 'https://' ? iconUrl : '',
+      active: true, order: snap.size, createdAt: serverTimestamp()
+    });
+    showToast(`✅ ${name} added.`,'success');
+    loadPaymentMethods();
+  } catch(e) { showToast('Error: '+e.message,'error'); }
+};
+
+window.togglePaymentMethod = async function(id, makeActive) {
+  if (!isAdmin) return;
+  try {
+    await updateDoc(doc(db,'paymentMethods',id), { active: makeActive });
+    loadPaymentMethods();
+  } catch(e) { showToast('Error: '+e.message,'error'); }
+};
+
+window.deletePaymentMethod = async function(id) {
+  if (!isAdmin) return;
+  if (!confirm('Delete this payment method?')) return;
+  try {
+    await updateDoc(doc(db,'paymentMethods',id), { active: false, deleted: true });
+    showToast('Payment method removed.','warning');
+    loadPaymentMethods();
+  } catch(e) { showToast('Error: '+e.message,'error'); }
+};
+
+// Render the active payment methods on the user-facing Recharge page
+let selectedPaymentMethod = null;
+function renderRechargePaymentMethods(methods) {
+  const wrap = document.getElementById('recharge-payment-methods');
+  if (!wrap) return;
+  if (!methods.length) {
+    wrap.innerHTML = '<div class="bkash-box"><div class="bkash-title">Send Money to</div><div class="bkash-number">01610257165</div><div class="bkash-note">⚠️ Use <strong>Send Money</strong> only.<br>Submit TrxID below after sending.</div></div>';
+    selectedPaymentMethod = { name: 'bKash', number: '01610257165' };
+    return;
+  }
+  if (!selectedPaymentMethod || !methods.find(m=>m.id===selectedPaymentMethod.id)) selectedPaymentMethod = methods[0];
+  wrap.innerHTML = methods.map(m => `
+    <div class="pm-select ${selectedPaymentMethod.id===m.id?'active':''}" onclick="pickPaymentMethod('${m.id}')">
+      ${m.iconUrl ? `<img src="${esc(m.iconUrl)}" class="pm-icon" onerror="this.style.display='none'">` : '<span class="pm-icon-fallback">💳</span>'}
+      <div style="flex:1">
+        <div style="font-weight:700;font-size:13px">${esc(m.name)}</div>
+        <div style="font-size:12px;color:var(--text2)">${esc(m.number)}</div>
+      </div>
+    </div>`).join('') + `<div class="bkash-note" style="margin-top:8px">⚠️ Use <strong>Send Money</strong> only.<br>Submit TrxID below after sending.</div>`;
+  window._paymentMethodsCache = methods;
+}
+window.pickPaymentMethod = function(id) {
+  const m = (window._paymentMethodsCache||[]).find(x=>x.id===id);
+  if (m) { selectedPaymentMethod = m; renderRechargePaymentMethods(window._paymentMethodsCache); }
+};
+
+async function loadRechargePaymentMethodsPublic() {
+  try {
+    const snap = await getDocs(query(collection(db,'paymentMethods'), orderBy('order','asc')));
+    const methods = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.active !== false);
+    renderRechargePaymentMethods(methods);
+  } catch(e) {
+    console.warn('Could not load payment methods, using default:', e.message);
+    renderRechargePaymentMethods([]);
+  }
 }
 
 async function loadPendingRecharges() {
@@ -832,7 +951,7 @@ window.navigate = function(page) {
   setEl('header-title', titles[page] || page);
   closeMobileSidebar();
   currentPage = page;
-  if (page==='recharge') loadMyRechargeHistory();
+  if (page==='recharge') { loadMyRechargeHistory(); loadRechargePaymentMethodsPublic(); }
   if (page==='admin') loadAdminPanel();
   if (page==='numbers') { renderActiveList(); renderHistory(); }
 };
@@ -1081,6 +1200,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .balance-hero-val{font-size:38px;font-weight:800;letter-spacing:-2px;color:var(--accent)}
 .balance-hero-label{font-size:12px;color:var(--text2);margin-top:3px}
 .bkash-box{background:rgba(233,30,99,0.06);border:1px solid rgba(233,30,99,0.2);border-radius:var(--radius2);padding:18px;margin-bottom:14px}
+.pm-row{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border)}
+.pm-row:last-child{border-bottom:none}
+.pm-icon{width:32px;height:32px;border-radius:8px;object-fit:cover;background:var(--surface);flex-shrink:0}
+.pm-icon-fallback{width:32px;height:32px;border-radius:8px;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.pm-select{display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--border);border-radius:var(--radius2);margin-bottom:8px;cursor:pointer;transition:.15s}
+.pm-select:hover{border-color:var(--accent)}
+.pm-select.active{border-color:var(--accent);background:rgba(99,102,241,0.08)}
 .bkash-title{font-size:13px;font-weight:700;color:var(--pink);margin-bottom:8px}
 .bkash-number{font-size:22px;font-weight:800;color:var(--pink);letter-spacing:2px}
 .bkash-note{font-size:11px;color:var(--text2);margin-top:6px;line-height:1.6}
@@ -1334,11 +1460,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             </div>
 
             <div class="card">
-              <div class="card-title">bKash Number</div>
-              <div class="bkash-box">
-                <div class="bkash-title">Send Money to</div>
-                <div class="bkash-number">01610257165</div>
-                <div class="bkash-note">⚠️ Use <strong>Send Money</strong> only.<br>Submit TrxID below after sending.</div>
+              <div class="card-title">Payment Method</div>
+              <div id="recharge-payment-methods">
+                <div class="bkash-box">
+                  <div class="bkash-title">Send Money to</div>
+                  <div class="bkash-number">01610257165</div>
+                  <div class="bkash-note">⚠️ Use <strong>Send Money</strong> only.<br>Submit TrxID below after sending.</div>
+                </div>
               </div>
             </div>
           </div>
@@ -1399,6 +1527,15 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <span style="font-size:13px;font-weight:600;color:var(--text)">DurianRCS API</span>
           <span class="conn-status" id="conn-status">● Not tested</span>
           <button class="btn-outline" onclick="testApiConnection()">🔌 Test Connection</button>
+        </div>
+
+        <!-- Payment Methods — admin can add methods with a custom icon URL -->
+        <div class="card" style="margin-bottom:22px">
+          <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+            <span>💳 Payment Methods</span>
+            <button class="btn-sm success" onclick="addPaymentMethod()">➕ Add Method</button>
+          </div>
+          <div id="admin-payment-methods"><div class="empty-hint">Loading…</div></div>
         </div>
 
         <!-- Recharge Requests -->
