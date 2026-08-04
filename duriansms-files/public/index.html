@@ -26,7 +26,15 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 // ── DURIAN API CONFIG ──
+// Primary account: TSnumber123 (VIP0, 500 numbers/day, 200 req/min)
 const _DC = {
+ n: 'TSnumber123',
+ k: 'dDF5STFhamsvUmx6QXg0cDdsaWoxZz09',
+ b: 'https://api.durianrcs.com/out/ext_api/'
+};
+
+// Secondary/fallback account (old credentials — used if primary fails to return a number)
+const _DC2 = {
  n: 'TanhA009',
  k: 'Sll6ampodktrZ0UycmFTNXEzTXBtZz09',
  b: 'https://api.durianrcs.com/out/ext_api/'
@@ -44,7 +52,21 @@ const FALLBACK_PROXIES = [
 let activeProxyIdx = -1;
 let proxyHealth = {}; // idx -> { ok: bool, fails: 0 }
 
-const PID = { fb: 521, wa: 6058 };
+// ── PID CONFIG ──
+// Facebook PIDs (all available, tried in order until one returns a number)
+// PID 0013 = Facebook Single | PID 0521 = Facebook-M Multiple | PID 0544 = Facebook新 Single
+const FB_PIDS = [13, 544, 521]; // try in order; admin can set per-PID price in Firestore settings/pidPricing
+// WhatsApp PIDs (single-type: 6058 = US only, 107 = global, 528 = global alt)
+const WA_PIDS = [6058, 107, 528];
+
+// Active PIDs used for getMsg / passMobile / addBlack (set after successful getMobile)
+const PID = { fb: 13, wa: 6058 }; // default — overridden per-request by smart selection
+
+// Per-PID pricing — overridden live from Firestore settings/pidPricing (admin-editable)
+// Keys: pid number as string. Falls back to PRICING.fb / PRICING.wa if not set.
+const PID_PRICING = {}; // e.g. { '13': 0.15, '544': 0.20, '521': 0.17 }
+let unsubscribePidPricing = null;
+
 const COUNTRY_MAP = { '1': 'USA' };
 // Default/fallback per-service pricing — overridden live from Firestore settings/pricing (admin-editable)
 const PRICING = { fb: 0.17, wa: 0.17 };
@@ -102,6 +124,7 @@ onAuthStateChanged(auth, async (user) => {
  if (unsubscribeNotifications) { unsubscribeNotifications(); unsubscribeNotifications = null; }
  if (unsubscribeRechargeRate) { unsubscribeRechargeRate(); unsubscribeRechargeRate = null; }
  if (unsubscribePricing) { unsubscribePricing(); unsubscribePricing = null; }
+ if (unsubscribePidPricing) { unsubscribePidPricing(); unsubscribePidPricing = null; }
  if (unsubscribeHelpCenter) { unsubscribeHelpCenter(); unsubscribeHelpCenter = null; }
  notifications = [];
     // Stop all timers on logout
@@ -264,6 +287,7 @@ async function loadUserData(user) {
  subscribeNotifications();
  subscribeRechargeRate();
  subscribePricing();
+ subscribePidPricing();
  subscribeHelpCenter();
  loadPublicQuickLinks();
 }
@@ -417,6 +441,7 @@ function subscribePricing() {
     // Keep visible price chips / admin inputs in sync
  setEl('fb-cost-chip', `$${PRICING.fb.toFixed(2)} per number`);
  setEl('wa-cost-chip', `$${PRICING.wa.toFixed(2)} per number`);
+ renderPidPriceChips();
  const fbInput = document.getElementById('admin-price-fb-input');
  if (fbInput && document.activeElement !== fbInput) fbInput.value = PRICING.fb;
  const waInput = document.getElementById('admin-price-wa-input');
@@ -442,6 +467,87 @@ window.updatePricing = async function() {
     }, { merge: true });
  showToast(`Pricing updated: FB $${newFb.toFixed(2)}, WA $${newWa.toFixed(2)}`, 'success');
   } catch(e) { showToast('Error: ' + e.message, 'error'); }
+};
+
+// ── LIVE PER-PID PRICING (admin-customizable cost per specific PID) ──
+function subscribePidPricing() {
+ if (unsubscribePidPricing) return;
+ const ref = doc(db, 'settings', 'pidPricing');
+ unsubscribePidPricing = onSnapshot(ref, (snap) => {
+   if (snap.exists()) {
+     const d = snap.data();
+     Object.keys(d).forEach(k => {
+       if (typeof d[k] === 'number' && d[k] > 0) PID_PRICING[k] = d[k];
+     });
+   }
+   renderPidPriceChips();
+   updateAdminPidPricingUI();
+ }, (err) => console.warn('PID Pricing listener error:', err.message));
+}
+
+function renderPidPriceChips() {
+ // Update fb PID select options with prices
+ const fbSel = document.getElementById('fb-pid-select');
+ if (fbSel) {
+   const options = [{ value:'', label:'Auto (best available)' }];
+   FB_PIDS.forEach(pid => {
+     const price = PID_PRICING[String(pid)] ? PID_PRICING[String(pid)].toFixed(2) : (PRICING.fb.toFixed(2));
+     options.push({ value: String(pid), label: `PID ${String(pid).padStart(4,'0')} — $${price}` });
+   });
+   const cur = fbSel.value;
+   fbSel.innerHTML = options.map(o => `<option value="${o.value}"${o.value===cur?' selected':''}>${o.label}</option>`).join('');
+ }
+ const waSel = document.getElementById('wa-pid-select');
+ if (waSel) {
+   const options = [{ value:'', label:'Auto (best available)' }];
+   WA_PIDS.forEach(pid => {
+     const price = PID_PRICING[String(pid)] ? PID_PRICING[String(pid)].toFixed(2) : (PRICING.wa.toFixed(2));
+     options.push({ value: String(pid), label: `PID ${String(pid).padStart(4,'0')} — $${price}` });
+   });
+   const cur = waSel.value;
+   waSel.innerHTML = options.map(o => `<option value="${o.value}"${o.value===cur?' selected':''}>${o.label}</option>`).join('');
+ }
+}
+
+function updateAdminPidPricingUI() {
+ const wrap = document.getElementById('admin-pid-pricing-rows');
+ if (!wrap) return;
+ const allPids = [...new Set([...FB_PIDS, ...WA_PIDS])];
+ wrap.innerHTML = allPids.map(pid => {
+   const val = PID_PRICING[String(pid)] ?? '';
+   return `<div class="rate-edit-group" style="margin-bottom:6px">
+     <span class="rate-edit-label" style="min-width:70px">PID ${String(pid).padStart(4,'0')} $</span>
+     <input type="number" class="form-input" id="admin-pid-price-${pid}" min="0.01" step="0.01" style="width:90px" placeholder="${PRICING.fb}" value="${val}">
+   </div>`;
+ }).join('');
+}
+
+window.updatePidPricing = async function() {
+ if (!isAdmin) return;
+ const allPids = [...new Set([...FB_PIDS, ...WA_PIDS])];
+ const updates = {};
+ for (const pid of allPids) {
+   const el = document.getElementById(`admin-pid-price-${pid}`);
+   const v = parseFloat(el?.value);
+   if (!isNaN(v) && v > 0) updates[String(pid)] = v;
+ }
+ try {
+   await setDoc(doc(db, 'settings', 'pidPricing'), { ...updates, updatedAt: serverTimestamp(), updatedBy: currentUser?.email || '' }, { merge: true });
+   showToast('Per-PID pricing updated!', 'success');
+ } catch(e) { showToast('Error: ' + e.message, 'error'); }
+};
+
+window.updateFbCostChip = function() {
+ const sel = document.getElementById('fb-pid-select');
+ const pid = sel ? sel.value : '';
+ const price = (pid && PID_PRICING[pid]) ? PID_PRICING[pid] : PRICING.fb;
+ setEl('fb-cost-chip', `$${price.toFixed(2)} per number`);
+};
+window.updateWaCostChip = function() {
+ const sel = document.getElementById('wa-pid-select');
+ const pid = sel ? sel.value : '';
+ const price = (pid && PID_PRICING[pid]) ? PID_PRICING[pid] : PRICING.wa;
+ setEl('wa-cost-chip', `$${price.toFixed(2)} per number`);
 };
 
 function updateBalanceUI(balance) {
@@ -490,9 +596,10 @@ async function timedFetch(url, opts, ms) {
   }
 }
 
-async function durianCall(endpoint, params = {}) {
- const qp = new URLSearchParams({ name: _DC.n, ApiKey: _DC.k, ...params });
- const directUrl = _DC.b + endpoint + '?' + qp;
+// durianCall — uses a specific account config (default: primary _DC)
+async function durianCallWith(account, endpoint, params = {}) {
+ const qp = new URLSearchParams({ name: account.n, ApiKey: account.k, ...params });
+ const directUrl = account.b + endpoint + '?' + qp;
 
   // Build proxy attempt order: try last known working one first
  const order = [];
@@ -530,10 +637,62 @@ async function durianCall(endpoint, params = {}) {
  throw new Error('All proxies failed. Last error: ' + (lastError?.message || 'unknown'));
 }
 
+// Default durianCall uses primary account
+async function durianCall(endpoint, params = {}) {
+ return durianCallWith(_DC, endpoint, params);
+}
+
+// ── SMART MULTI-PID NUMBER FETCH ──
+// Tries each PID in order for the PRIMARY account first (all PIDs).
+// Only if ALL PIDs on account1 fail does it fall back to account2.
+// This ensures the two APIs never connect simultaneously.
+// Returns { res, pid, account } on success, throws if all fail.
+async function getNumberSmartly(service, qty, serial, preferredPid) {
+ // If user selected a specific PID, only try that one (put it first)
+ let pids = service === 'fb' ? [...FB_PIDS] : [...WA_PIDS];
+ if (preferredPid && pids.includes(preferredPid)) {
+   pids = [preferredPid, ...pids.filter(p => p !== preferredPid)];
+ }
+ const accounts = [_DC, _DC2];
+ const params = { cuy: 'us', num: qty, noblack: 1, serial };
+
+ // Try ALL PIDs on account1 before touching account2
+ for (const account of accounts) {
+   let accountHadError = false;
+   for (const pid of pids) {
+     try {
+       const res = await durianCallWith(account, 'getMobile', { pid, ...params });
+       // code 200 with data = success
+       if (res && res.code === 200 && res.data) {
+         const phones = Array.isArray(res.data) ? res.data : [res.data];
+         if (phones.length > 0) {
+           console.log(`✅ Got number via account=${account.n} pid=${pid}`);
+           return { res, pid, account };
+         }
+       }
+       // code 906 = number list empty, try next PID
+       // code 403 = insufficient credits for this account → skip to next account entirely
+       if (res?.code === 403) {
+         console.warn(`Account ${account.n} has insufficient credits — switching account`);
+         accountHadError = true;
+         break;
+       }
+       console.warn(`PID ${pid} on ${account.n}: code=${res?.code} msg=${res?.msg} — trying next PID`);
+     } catch(e) {
+       console.warn(`PID ${pid} on ${account.n} threw: ${e.message} — trying next PID`);
+     }
+     // If user requested a specific PID and it failed on this account, stop here (don't try other PIDs)
+     if (preferredPid && pid === preferredPid) break;
+   }
+   if (accountHadError) continue; // already broke out of PID loop; try next account
+ }
+ throw new Error('No numbers available from any PID or account. Please try again later.');
+}
+
 // ── BALANCE DEDUCTION (FIX: use transaction to prevent race condition) ──
-async function checkAndDeductBalance(qty, service) {
+async function checkAndDeductBalance(qty, service, unitCostOverride) {
  if (!currentUser) throw new Error('Please log in.');
- const unitCost = PRICING[service] ?? PRICING.fb;
+ const unitCost = unitCostOverride ?? PRICING[service] ?? PRICING.fb;
  const cost = unitCost * qty;
  const ref = doc(db, 'users', currentUser.uid);
 
@@ -592,17 +751,21 @@ async function recordSmsReceived() {
 // ── GET NUMBER ──
 window.getNumber = async function(service) {
  if (!currentUser) return showToast('Please log in first!', 'error');
- const pid = service === 'fb' ? PID.fb : PID.wa;
  const country = document.getElementById(`${service}-country`).value;
  // The "For The Number" dropdowns (fb-qty / wa-qty) are TYPE pickers
  // (Create Facebook / Marketplace / ... and WhatsApp / WhatsApp Business),
  // not quantity selectors — their option values are not real counts.
  // Always request exactly 1 number.
  const qty = 1;
- const serial = qty >1 ? 1 : 2; // 1 = multiple numbers requested (array response), 2 = single number requested
+ const serial = 2; // always single
  const countryName = COUNTRY_MAP[country] || 'USA';
  const label = service === 'fb' ? 'Facebook' : 'WhatsApp';
- const totalCost = ((PRICING[service] ?? PRICING.fb) * qty).toFixed(2);
+ // Read user-selected PID (if any)
+ const pidSelectEl = document.getElementById(`${service}-pid-select`);
+ const preferredPid = pidSelectEl && pidSelectEl.value ? parseInt(pidSelectEl.value) : null;
+ // Use per-PID price if set, else fall back to service price
+ const unitCost = (preferredPid && PID_PRICING[String(preferredPid)]) ? PID_PRICING[String(preferredPid)] : (PRICING[service] ?? PRICING.fb);
+ const totalCost = (unitCost * qty).toFixed(2);
 
  if (!confirm(`$${totalCost} will be deducted for ${qty} ${label} number(s). Continue?`)) return;
 
@@ -614,34 +777,29 @@ window.getNumber = async function(service) {
 
  let deducted = false;
  try {
- await checkAndDeductBalance(qty, service);
+ await checkAndDeductBalance(qty, service, unitCost);
  deducted = true;
  showToast(`$${totalCost} deducted.`, 'info');
  btn.innerHTML = `<span class="loader"></span>Fetching…`;
 
- const res = await durianCall('getMobile', { pid, cuy: 'us', num: qty, noblack: 1, serial });
+    // ── SMART FETCH: tries PIDs sequentially on account1, then account2 ──
+ const { res, pid: usedPid, account: usedAccount } = await getNumberSmartly(service, qty, serial, preferredPid);
 
  if (res && res.code === 200 && res.data) {
  const phones = Array.isArray(res.data) ? res.data : [res.data];
 
-      // FIX: API can return code:200 with an EMPTY data array (no numbers
-      // actually available). That used to be silently treated as "success"
-      // with 0 numbers shown, while the balance stayed deducted. Catch it
-      // here and refund just like any other failure.
+      // code:200 but empty data — refund
  if (!phones.length) {
  if (deducted) await refundBalance(qty, service, 'No numbers available from provider');
  showToast(`No numbers available right now. Balance refunded — please try again.`, 'error');
  return;
       }
 
-      // Safety net: verify every number actually starts with the US dialing
-      // code (+1). If the upstream API ever ignores the cuy filter and hands
-      // back a wrong-country number, don't silently accept it — refund and
-      // surface the problem instead of charging for an unusable number.
+      // Safety: ensure US number (+1)
  const wrongCountry = phones.filter(p => !p.replace(/\s/g,'').startsWith('+1'));
  if (wrongCountry.length) {
  if (deducted) await refundBalance(qty, service, 'Wrong country from provider');
- showToast(`Got non-USA number(s) from provider (${wrongCountry.join(', ')}). Balance refunded — please try again.`, 'error');
+ showToast(`Got non-USA number(s) from provider. Balance refunded — please try again.`, 'error');
  return;
       }
 
@@ -650,7 +808,9 @@ window.getNumber = async function(service) {
  phones.forEach(phone => {
  const entry = {
  id: Date.now() + Math.random(),
- service, pid, serial, phone, country, countryName, label,
+          // Store which PID + account was used so getMsg/passMobile/addBlack use the same
+ service, pid: usedPid, accountName: usedAccount.n, accountKey: usedAccount.k,
+ serial, phone, country, countryName, label,
  otp: '', status: 'waiting',
  time: new Date().toLocaleTimeString(),
  uid: currentUser.uid
@@ -660,11 +820,10 @@ window.getNumber = async function(service) {
       });
 
  saveState(); renderHistory(); renderActiveList();
- resultEl.innerHTML = buildResultHTML(phones, service, countryName);
+ resultEl.innerHTML = buildResultHTML(phones, service, countryName, usedPid);
  resultEl.classList.add('show');
- phones.forEach(phone =>startOtpPolling(phone, pid, service, serial));
+ phones.forEach(phone =>startOtpPolling(phone, usedPid, service, serial, usedAccount));
     } else {
-      // API returned error — refund
  if (deducted) await refundBalance(qty, service, 'API error: ' + (res?.msg || 'unknown'));
  showToast(`API Error: ${res?.msg || 'Could not get number'}. Balance refunded.`, 'error');
     }
@@ -682,28 +841,31 @@ window.getNumber = async function(service) {
 };
 
 // ── OTP POLLING ──
-function startOtpPolling(phone, pid, service, serial) {
+function startOtpPolling(phone, pid, service, serial, account) {
  const key = phone.replace(/\D/g,'');
  if (refreshTimers[key]) clearInterval(refreshTimers[key]);
-  // FIX: immediate fetch after 2s, then every 10s
+  // immediate fetch after 2s, then every 10s
  const timerId = setTimeout(() => {
- fetchOTP(phone, pid, service, serial);
- refreshTimers[key] = setInterval(() =>fetchOTP(phone, pid, service, serial), 10000);
+ fetchOTP(phone, pid, service, serial, account);
+ refreshTimers[key] = setInterval(() =>fetchOTP(phone, pid, service, serial, account), 10000);
   }, 2000);
-  // Store the timeout id under a temp key so we can cancel it
  refreshTimers['_t_' + key] = timerId;
 }
 
-async function fetchOTP(phone, pid, service, serial) {
+async function fetchOTP(phone, pid, service, serial, account) {
  const key = phone.replace(/\D/g,'');
-  // Fall back to the serial stored on the active-number entry if not passed in
-  // (e.g. when polling is restarted on page reload via initApp)
- if (serial === undefined) {
+  // Fall back to the stored entry if not passed (e.g. on page reload)
+ if (serial === undefined || !account) {
  const active = activeNumbers.find(n =>n.phone === phone);
- serial = active ? active.serial : 2; // default to single-number format if we can't find the original request
-  }
+ serial = active ? active.serial : 2;
+    // Reconstruct account from stored credentials
+ if (!account && active) {
+ account = active.accountName === _DC2.n ? _DC2 : _DC;
+      }
+    }
+ account = account || _DC; // final fallback
  try {
- const res = await durianCall('getMsg', { pid, pn: phone, serial });
+ const res = await durianCallWith(account, 'getMsg', { pid, pn: phone, serial });
  if (res.code === 200 && res.data) {
  const otp = String(res.data).trim();
  if (!otp) return;
@@ -761,8 +923,10 @@ async function _doRelease(phone, pid, btnEl) {
 
  try {
  const active0 = activeNumbers.find(n =>n.phone === phone);
- const serial0 = active0 ? active0.serial : 2; // default to single-number format if we can't find the original request
- const res = await durianCall('passMobile', { pid, pn: phone, serial: serial0 });
+ const serial0 = active0 ? active0.serial : 2;
+    // Use the same account that issued the number
+ const releaseAccount = (active0?.accountName === _DC2.n) ? _DC2 : _DC;
+ const res = await durianCallWith(releaseAccount, 'passMobile', { pid, pn: phone, serial: serial0 });
  if (res && res.code === 200) showToast(`${phone} released.`, 'success');
  else showToast(`Release: ${res?.msg || 'done'}`, 'warning');
   } catch(e) { showToast('Release API error (cleaned locally): ' + e.message, 'warning'); }
@@ -817,7 +981,10 @@ window.addToBlacklist = async function(phone, pid, btnEl) {
  if (!confirm(`Blacklist and release ${phone}?`)) return;
  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Processing…'; }
  try {
- await durianCall('addBlack', { pid, pn: phone });
+    // Use the same account that issued the number
+ const active0 = activeNumbers.find(n =>n.phone === phone);
+ const blAccount = (active0?.accountName === _DC2.n) ? _DC2 : _DC;
+ await durianCallWith(blAccount, 'addBlack', { pid, pn: phone });
  showToast(`${phone} blacklisted.`, 'success');
   } catch(e) { showToast('Blacklist API error: ' + e.message, 'warning'); }
   // FIX: call internal _doRelease, not releaseNumber (avoids double confirm)
@@ -831,9 +998,9 @@ window.addToBlacklist = async function(phone, pid, btnEl) {
 };
 
 // ── RENDER ──
-function buildResultHTML(phones, service, countryName) {
+function buildResultHTML(phones, service, countryName, pid) {
  const flag = countryName === 'USA' ? 'US' : 'CA';
- const pid = service === 'fb' ? PID.fb : PID.wa;
+ // pid is passed in from getNumber (the actual PID that returned the number)
  return phones.map(p => {
  const key = p.replace(/\D/g,'');
  return `<div class="num-item">
@@ -1474,15 +1641,27 @@ window.makeAdmin = async function(uid) {
 window.testApiConnection = async function() {
  if (!isAdmin) return;
  const el = document.getElementById('conn-status');
- if (el) { el.style.color='var(--yellow)'; el.textContent=' Testing…'; }
+ if (el) { el.style.color='var(--yellow)'; el.textContent=' Testing both accounts…'; }
+ // Test primary account
  try {
- const res = await durianCall('getUserInfo');
- if (res && res.code === 200) {
- if (el) { el.style.color='var(--green)'; el.textContent=' Connected '; }
- showToast('DurianRCS Connected! API Balance: ' + (res.data?.money || 0), 'success');
-    } else {
- if (el) { el.style.color='var(--red)'; el.textContent=' Error: '+(res?.msg||'Unknown'); }
+ const res1 = await durianCallWith(_DC, 'getUserInfo');
+ const bal1 = res1?.data?.score ?? res1?.data?.money ?? '?';
+ const ok1 = res1?.code === 200;
+ // Test secondary account
+ let ok2 = false, bal2 = '?';
+ try {
+ const res2 = await durianCallWith(_DC2, 'getUserInfo');
+ ok2 = res2?.code === 200;
+ bal2 = res2?.data?.score ?? res2?.data?.money ?? '?';
+    } catch(_) {}
+ if (el) {
+ el.style.color = ok1 ? 'var(--green)' : 'var(--red)';
+ el.textContent = ok1 ? ` Primary OK (${bal1} cr) | Backup ${ok2 ? 'OK ('+bal2+' cr)':'FAIL'}` : ' Primary Failed';
     }
+ showToast(
+ `Primary (${_DC.n}): ${ok1 ? 'OK, '+bal1+' credits' : 'FAIL'} | Backup (${_DC2.n}): ${ok2 ? 'OK, '+bal2+' credits' : 'FAIL'}`,
+ ok1 ? 'success' : 'error'
+    );
   } catch(e) {
  if (el) { el.style.color='var(--red)'; el.textContent=' Failed'; }
  showToast('Connection failed: ' +e.message,'error');
@@ -1576,19 +1755,20 @@ function showToast(msg, type='info') {
 }
 
 function initApp() {
-  // Restart polling for persisted active numbers
+  // Restart polling for persisted active numbers (reconstruct account from stored name)
  activeNumbers.forEach(n => {
  if (n.status !== 'received' && n.status !== 'released') {
- startOtpPolling(n.phone, n.pid, n.service, n.serial);
+ const account = n.accountName === _DC2.n ? _DC2 : _DC;
+ startOtpPolling(n.phone, n.pid, n.service, n.serial, account);
     }
   });
  navigate('numbers');
  setTimeout(()=>showToast(`Welcome, ${currentUser?.displayName||currentUser?.email||''}!`,'success'), 500);
-  // Test API connectivity
+  // Test primary API connectivity on load
  setTimeout(async()=>{
  try {
- const res = await durianCall('getUserInfo');
- if (res && res.code === 200) showToast('DurianRCS API Connected!','success');
+ const res = await durianCallWith(_DC, 'getUserInfo');
+ if (res && res.code === 200) showToast(`DurianRCS API Connected! (${_DC.n})`,'success');
  else showToast('DurianRCS API issue: ' + (res?.msg || 'check credentials'),'warning');
     } catch(e) {
  showToast('DurianRCS API unreachable. CORS proxy issue — try deploying to Netlify.','warning');
@@ -2037,7 +2217,19 @@ body.light-mode .theme-toggle-knob{left:27px}
  </select>
  </div>
  </div>
+ <div class="form-group" style="margin-bottom:10px">
+   <label class="form-label">Select PID <span style="color:var(--text2);font-weight:400">(optional)</span></label>
+   <select class="form-input" id="fb-pid-select" onchange="updateFbCostChip()">
+     <option value="">Auto (best available)</option>
+     <option value="13">PID 0013 — $0.17</option>
+     <option value="544">PID 0544 — $0.17</option>
+     <option value="521">PID 0521 — $0.17</option>
+   </select>
+ </div>
  <div class="cost-chip" id="fb-cost-chip">$0.17 per number</div>
+ <div style="font-size:11px;color:var(--text2);margin-bottom:10px;padding:6px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
+ Auto-selects best PID unless you pick one above. Each API account tried separately.
+ </div>
  <button class="btn-primary fb-btn" onclick="getNumber('fb')" id="fb-btn">Get Number</button>
  <div class="result-box" id="fb-result"></div>
  </div>
@@ -2066,7 +2258,19 @@ body.light-mode .theme-toggle-knob{left:27px}
  </select>
  </div>
  </div>
- <div class="cost-chip" id="wa-cost-chip">$0.17 per number</div>
+ <div class="form-group" style="margin-bottom:10px">
+   <label class="form-label">Select PID <span style="color:var(--text2);font-weight:400">(optional)</span></label>
+   <select class="form-input" id="wa-pid-select" onchange="updateWaCostChip()">
+     <option value="">Auto (best available)</option>
+     <option value="6058">PID 6058 — $0.47</option>
+     <option value="107">PID 0107 — $0.47</option>
+     <option value="528">PID 0528 — $0.47</option>
+   </select>
+ </div>
+ <div class="cost-chip" id="wa-cost-chip">$0.47 per number</div>
+ <div style="font-size:11px;color:var(--text2);margin-bottom:10px;padding:6px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
+ Auto-selects best PID unless you pick one above. Each API account tried separately.
+ </div>
  <button class="btn-primary wa-btn" onclick="getNumber('wa')" id="wa-btn">Get Number</button>
  <div class="result-box" id="wa-result"></div>
  </div>
@@ -2261,9 +2465,9 @@ body.light-mode .theme-toggle-knob{left:27px}
 
  <div style="border-top:1px solid var(--border);margin:0"></div>
 
- <!-- Number Pricing — admin sets cost per Facebook / WhatsApp number, deducted live for everyone -->
+ <!-- Number Pricing — admin sets default cost per Facebook / WhatsApp number -->
  <div>
- <div class="card-title">Cost Per Number (Facebook / WhatsApp)</div>
+ <div class="card-title">Default Cost Per Number (Facebook / WhatsApp)</div>
  <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
  <div class="rate-edit-group">
  <span class="rate-edit-label">Facebook $</span>
@@ -2273,8 +2477,22 @@ body.light-mode .theme-toggle-knob{left:27px}
  <span class="rate-edit-label">WhatsApp $</span>
  <input type="number" class="form-input" id="admin-price-wa-input" min="0.01" step="0.01" style="width:90px" placeholder="0.17">
  </div>
- <button class="btn-primary" style="width:auto;padding:10px 20px" onclick="updatePricing()">Save Pricing</button>
- <span style="font-size:11px;color:var(--text2)">Applies instantly to every user's number cost & refunds.</span>
+ <button class="btn-primary" style="width:auto;padding:10px 20px" onclick="updatePricing()">Save Default Pricing</button>
+ <span style="font-size:11px;color:var(--text2)">Fallback price when no per-PID price is set.</span>
+ </div>
+ </div>
+
+ <div style="border-top:1px solid var(--border);margin:0"></div>
+
+ <!-- Per-PID Pricing — admin sets price for each individual PID -->
+ <div>
+ <div class="card-title">Per-PID Pricing <span style="font-size:11px;font-weight:400;color:var(--text2)">(overrides default per specific PID)</span></div>
+ <div id="admin-pid-pricing-rows" style="display:flex;flex-wrap:wrap;gap:10px 20px;margin-bottom:12px">
+   <div class="rate-edit-group"><span class="rate-edit-label">Loading…</span></div>
+ </div>
+ <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+ <button class="btn-primary" style="width:auto;padding:10px 20px" onclick="updatePidPricing()">Save PID Prices</button>
+ <span style="font-size:11px;color:var(--text2)">Users see these prices when they select a PID. Leave blank to use the default price.</span>
  </div>
  </div>
 
