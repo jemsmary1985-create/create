@@ -59,9 +59,6 @@ const FB_PIDS = [13, 544, 521]; // try in order; admin can set per-PID price in 
 // WhatsApp PIDs (single-type: 6058 = US only, 107 = global, 528 = global alt)
 const WA_PIDS = [6058, 107, 528];
 
-// Active PIDs used for getMsg / passMobile / addBlack (set after successful getMobile)
-const PID = { fb: 13, wa: 6058 }; // default — overridden per-request by smart selection
-
 // Per-PID pricing — overridden live from Firestore settings/pidPricing (admin-editable)
 // Keys: pid number as string. Falls back to PRICING.fb / PRICING.wa if not set.
 const PID_PRICING = {}; // e.g. { '13': 0.15, '544': 0.20, '521': 0.17 }
@@ -484,32 +481,8 @@ function subscribePricing() {
  setEl('fb-cost-chip', `$${PRICING.fb.toFixed(2)} per number`);
  setEl('wa-cost-chip', `$${PRICING.wa.toFixed(2)} per number`);
  renderPidPriceChips();
- const fbInput = document.getElementById('admin-price-fb-input');
- if (fbInput && document.activeElement !== fbInput) fbInput.value = PRICING.fb;
- const waInput = document.getElementById('admin-price-wa-input');
- if (waInput && document.activeElement !== waInput) waInput.value = PRICING.wa;
   }, (err) =>console.warn('Pricing listener error:', err.message));
 }
-
-window.updatePricing = async function() {
- if (!isAdmin) return;
- const fbInput = document.getElementById('admin-price-fb-input');
- const waInput = document.getElementById('admin-price-wa-input');
- const newFb = parseFloat(fbInput.value);
- const newWa = parseFloat(waInput.value);
- if (!newFb || isNaN(newFb) || newFb <= 0) return showToast('Enter a valid Facebook price (e.g. 0.17).', 'warning');
- if (!newWa || isNaN(newWa) || newWa <= 0) return showToast('Enter a valid WhatsApp price (e.g. 0.17).', 'warning');
- if (!confirm(`Set Facebook = $${newFb.toFixed(2)}/number and WhatsApp = $${newWa.toFixed(2)}/number for all users?`)) return;
- try {
- await setDoc(doc(db, 'settings', 'pricing'), {
- fb: newFb,
- wa: newWa,
- updatedAt: serverTimestamp(),
- updatedBy: currentUser?.email || ''
-    }, { merge: true });
- showToast(`Pricing updated: FB $${newFb.toFixed(2)}, WA $${newWa.toFixed(2)}`, 'success');
-  } catch(e) { showToast('Error: ' + e.message, 'error'); }
-};
 
 // ── LIVE PER-PID PRICING (admin-customizable cost per specific PID) ──
 function subscribePidPricing() {
@@ -682,10 +655,12 @@ async function durianCall(endpoint, params = {}) {
  return durianCallWith(_DC, endpoint, params);
 }
 
-// ── SMART MULTI-PID NUMBER FETCH ──
-// Tries each PID in order for the PRIMARY account first (all PIDs).
-// Only if ALL PIDs on account1 fail does it fall back to account2.
-// This ensures the two APIs never connect simultaneously.
+// ── PER-PID NUMBER FETCH ──
+// If the user picked a specific PID, ONLY that PID is tried (on both accounts,
+// as a backend-redundancy retry of the SAME PID — never a different PID).
+// If that PID has no numbers, this throws and the user must manually pick
+// another PID from the dropdown. No automatic fallback to other PIDs.
+// If the user did NOT pick a PID, all PIDs are tried in order as before.
 // Returns { res, pid, account } on success, throws if all fail.
 async function getNumberSmartly(service, qty, serial, preferredPid) {
  // If user selected a specific PID, only try that one (put it first)
@@ -705,6 +680,8 @@ async function getNumberSmartly(service, qty, serial, preferredPid) {
    for (const pid of pids) {
      if (exhaustedPids.has(pid)) {
        console.warn(`PID ${pid} already at upper limit — skipping on ${account.n}`);
+       // If this is the user's preferred PID, stop entirely — do not fall back to other PIDs.
+       if (preferredPid && pid === preferredPid) break;
        continue;
      }
      try {
@@ -721,26 +698,33 @@ async function getNumberSmartly(service, qty, serial, preferredPid) {
        if (res?.code === 200408) {
          console.warn(`PID ${pid} has reached its upper limit (200408) — marking exhausted globally`);
          exhaustedPids.add(pid);
-         continue;
-       }
-       // code 403 = insufficient credits for this account → skip to next account entirely
-       if (res?.code === 403) {
+       } else if (res?.code === 403) {
+         // code 403 = insufficient credits for this account → skip to next account entirely
          console.warn(`Account ${account.n} has insufficient credits — switching account`);
          accountHadError = true;
          break;
+       } else {
+         // code 906 = number list empty, or any other non-success code
+         console.warn(`PID ${pid} on ${account.n}: code=${res?.code} msg=${res?.msg}`);
        }
-       // code 906 = number list empty, try next PID
-       console.warn(`PID ${pid} on ${account.n}: code=${res?.code} msg=${res?.msg} — trying next PID`);
      } catch(e) {
-       console.warn(`PID ${pid} on ${account.n} threw: ${e.message} — trying next PID`);
+       console.warn(`PID ${pid} on ${account.n} threw: ${e.message}`);
      }
-     // If user requested a specific PID and it failed on this account, stop here (don't try other PIDs)
+     // If user requested a specific PID, never fall back to a different PID —
+     // stop here regardless of why this attempt failed (empty, exhausted, error).
+     // The user must manually pick another PID from the dropdown.
      if (preferredPid && pid === preferredPid) break;
    }
    if (accountHadError) continue; // already broke out of PID loop; try next account
  }
 
  // Give a useful error message based on what happened
+ if (preferredPid) {
+   if (exhaustedPids.has(preferredPid)) {
+     throw new Error(`PID ${String(preferredPid).padStart(4,'0')} has reached its daily upper limit. Please select a different PID.`);
+   }
+   throw new Error(`No numbers available for PID ${String(preferredPid).padStart(4,'0')} right now. Please select a different PID.`);
+ }
  const allExhausted = pids.every(p => exhaustedPids.has(p));
  if (allExhausted) {
    throw new Error('All PIDs have reached their daily upper limit. Please try again tomorrow or contact admin.');
@@ -870,9 +854,12 @@ window.getNumber = async function(service) {
  const entry = {
  id: Date.now() + Math.random(),
           // Store which PID + account was used so getMsg/passMobile/addBlack use the same
+          // unitCost = the exact price actually charged for this number (based on the PID
+          // selected at deduction time), so a later refund always matches the deduction —
+          // even if the smart-fetch fallback ended up using a different PID than preferred.
  service, pid: usedPid, accountName: usedAccount.n, accountKey: usedAccount.k,
  serial, phone, country, countryName, label,
- otp: '', status: 'waiting',
+ otp: '', status: 'waiting', unitCost,
  time: new Date().toLocaleTimeString(),
  uid: currentUser.uid
         };
@@ -994,13 +981,14 @@ async function _doRelease(phone, pid, btnEl) {
   } catch(e) { showToast('Release API error (cleaned locally): ' + e.message, 'warning'); }
 
   // FIX: refund balance if OTP was never received for this number.
-  // Always refund at the PID's own price (the price actually charged),
-  // never the old global default.
+  // Always refund the exact amount that was actually deducted (active.unitCost),
+  // never re-derive it from the PID — because the smart-fetch fallback can end
+  // up using a different PID than the one priced at deduction time, which was
+  // the root cause of refunds not matching what was charged.
  const active = activeNumbers.find(n =>n.phone === phone);
  const otpNotReceived = active ? active.status !== 'received' : true;
  const relService = active?.service || 'fb';
- const relPid = active?.pid ?? pid;
- const relUnitCost = PID_PRICING[String(relPid)] ?? PRICING[relService] ?? PRICING.fb;
+ const relUnitCost = active?.unitCost ?? (PID_PRICING[String(active?.pid ?? pid)] ?? PRICING[relService] ?? PRICING.fb);
  if (otpNotReceived) {
  await refundBalance(1, relService, 'No OTP received', relUnitCost);
  showToast(`$${relUnitCost.toFixed(2)} refunded (no OTP received).`, 'info');
