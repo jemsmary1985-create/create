@@ -771,9 +771,11 @@ async function checkAndDeductBalance(qty, service, unitCostOverride) {
 // number is released without an OTP — no limit, no admin approval step.
 // Uses the same runTransaction pattern as the deduct (which already works
 // reliably), plus a couple of retries in case of a brief network hiccup.
-async function refundBalance(qty, service, reason) {
+// unitCost should always be the PID-specific price that was actually
+// charged for this number (PID_PRICING[pid]) so refunds match deductions.
+async function refundBalance(qty, service, reason, unitCost) {
  if (!currentUser) return;
- const unitCost = PRICING[service] ?? PRICING.fb;
+ if (unitCost == null) unitCost = PRICING[service] ?? PRICING.fb;
  const amount = +(unitCost * qty).toFixed(2);
  const ref = doc(db, 'users', currentUser.uid);
  let lastErr = null;
@@ -849,7 +851,7 @@ window.getNumber = async function(service) {
 
       // code:200 but empty data — refund
  if (!phones.length) {
- if (deducted) await refundBalance(qty, service, 'No numbers available from provider');
+ if (deducted) await refundBalance(qty, service, 'No numbers available from provider', unitCost);
  showToast(`No numbers available right now. Balance refunded — please try again.`, 'error');
  return;
       }
@@ -857,7 +859,7 @@ window.getNumber = async function(service) {
       // Safety: ensure US number (+1)
  const wrongCountry = phones.filter(p => !p.replace(/\s/g,'').startsWith('+1'));
  if (wrongCountry.length) {
- if (deducted) await refundBalance(qty, service, 'Wrong country from provider');
+ if (deducted) await refundBalance(qty, service, 'Wrong country from provider', unitCost);
  showToast(`Got non-USA number(s) from provider. Balance refunded — please try again.`, 'error');
  return;
       }
@@ -883,12 +885,12 @@ window.getNumber = async function(service) {
  resultEl.classList.add('show');
  phones.forEach(phone =>startOtpPolling(phone, usedPid, service, serial, usedAccount));
     } else {
- if (deducted) await refundBalance(qty, service, 'API error: ' + (res?.msg || 'unknown'));
+ if (deducted) await refundBalance(qty, service, 'API error: ' + (res?.msg || 'unknown'), unitCost);
  showToast(`API Error: ${res?.msg || 'Could not get number'}. Balance refunded.`, 'error');
     }
   } catch(e) {
  if (deducted && !e.message.includes('Insufficient')) {
- await refundBalance(qty, service, 'Request error: ' + e.message);
+ await refundBalance(qty, service, 'Request error: ' + e.message, unitCost);
  showToast(`Error: ${e.message}. Balance refunded.`, 'error');
     } else {
  showToast(e.message, 'error');
@@ -991,13 +993,17 @@ async function _doRelease(phone, pid, btnEl) {
  else showToast(`Release: ${res?.msg || 'done'}`, 'warning');
   } catch(e) { showToast('Release API error (cleaned locally): ' + e.message, 'warning'); }
 
-  // FIX: refund balance if OTP was never received for this number
+  // FIX: refund balance if OTP was never received for this number.
+  // Always refund at the PID's own price (the price actually charged),
+  // never the old global default.
  const active = activeNumbers.find(n =>n.phone === phone);
  const otpNotReceived = active ? active.status !== 'received' : true;
  const relService = active?.service || 'fb';
+ const relPid = active?.pid ?? pid;
+ const relUnitCost = PID_PRICING[String(relPid)] ?? PRICING[relService] ?? PRICING.fb;
  if (otpNotReceived) {
- await refundBalance(1, relService, 'No OTP received');
- showToast(`$${(PRICING[relService] ?? PRICING.fb).toFixed(2)} refunded (no OTP received).`, 'info');
+ await refundBalance(1, relService, 'No OTP received', relUnitCost);
+ showToast(`$${relUnitCost.toFixed(2)} refunded (no OTP received).`, 'info');
   }
 
   // Always clean up locally
@@ -1075,7 +1081,7 @@ function buildResultHTML(phones, service, countryName, pid) {
  <button class="copy-mini" onclick="copyOTP('${key}')">Copy OTP</button>
  </div>
  <div class="num-row" style="margin-top:8px;gap:6px">
- <span style="font-size:12px;color:var(--text2)">${flag} ${esc(countryName)} · $${(PRICING[service] ?? PRICING.fb).toFixed(2)}</span>
+ <span style="font-size:12px;color:var(--text2)">${flag} ${esc(countryName)} · $${(PID_PRICING[String(pid)] ?? PRICING[service] ?? PRICING.fb).toFixed(2)}</span>
  <button class="btn-sm" onclick="refreshOTP('${esc(p)}',${pid},'${key}',this)">Refresh</button>
  <button class="btn-sm danger" onclick="releaseNumber('${esc(p)}',${pid},this)">Release</button>
  <button class="btn-sm" onclick="addToBlacklist('${esc(p)}',${pid},this)">Blacklist</button>
@@ -2526,34 +2532,15 @@ body.light-mode .theme-toggle-knob{left:27px}
 
  <div style="border-top:1px solid var(--border);margin:0"></div>
 
- <!-- Number Pricing — admin sets default cost per Facebook / WhatsApp number -->
- <div>
- <div class="card-title">Default Cost Per Number (Facebook / WhatsApp)</div>
- <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
- <div class="rate-edit-group">
- <span class="rate-edit-label">Facebook $</span>
- <input type="number" class="form-input" id="admin-price-fb-input" min="0.01" step="0.01" style="width:90px" placeholder="0.17">
- </div>
- <div class="rate-edit-group">
- <span class="rate-edit-label">WhatsApp $</span>
- <input type="number" class="form-input" id="admin-price-wa-input" min="0.01" step="0.01" style="width:90px" placeholder="0.17">
- </div>
- <button class="btn-primary" style="width:auto;padding:10px 20px" onclick="updatePricing()">Save Default Pricing</button>
- <span style="font-size:11px;color:var(--text2)">Fallback price when no per-PID price is set.</span>
- </div>
- </div>
-
- <div style="border-top:1px solid var(--border);margin:0"></div>
-
  <!-- Per-PID Pricing — admin sets price for each individual PID -->
  <div>
- <div class="card-title">Per-PID Pricing <span style="font-size:11px;font-weight:400;color:var(--text2)">(overrides default per specific PID)</span></div>
+ <div class="card-title">Per-PID Pricing <span style="font-size:11px;font-weight:400;color:var(--text2)">(each PID's own price)</span></div>
  <div id="admin-pid-pricing-rows" style="display:flex;flex-wrap:wrap;gap:10px 20px;margin-bottom:12px">
    <div class="rate-edit-group"><span class="rate-edit-label">Loading…</span></div>
  </div>
  <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
  <button class="btn-primary" style="width:auto;padding:10px 20px" onclick="updatePidPricing()">Save PID Prices</button>
- <span style="font-size:11px;color:var(--text2)">Users see these prices when they select a PID. Leave blank to use the default price.</span>
+ <span style="font-size:11px;color:var(--text2)">Users are charged and refunded exactly at the price set for the PID they use.</span>
  </div>
  </div>
 
