@@ -594,7 +594,11 @@ window.getNumber = async function(service) {
  if (!currentUser) return showToast('Please log in first!', 'error');
  const pid = service === 'fb' ? PID.fb : PID.wa;
  const country = document.getElementById(`${service}-country`).value;
- const qty = Math.min(10, Math.max(1, parseInt(document.getElementById(`${service}-qty`).value) || 1));
+ // The "For The Number" dropdowns (fb-qty / wa-qty) are TYPE pickers
+ // (Create Facebook / Marketplace / ... and WhatsApp / WhatsApp Business),
+ // not quantity selectors — their option values are not real counts.
+ // Always request exactly 1 number.
+ const qty = 1;
  const serial = qty >1 ? 1 : 2; // 1 = multiple numbers requested (array response), 2 = single number requested
  const countryName = COUNTRY_MAP[country] || 'USA';
  const label = service === 'fb' ? 'Facebook' : 'WhatsApp';
@@ -2024,7 +2028,7 @@ body.light-mode .theme-toggle-knob{left:27px}
  </div>
 <div class="form-group">
  <label class="form-label">For The Number</label>
- <select class="form-input" id="wa-qty">
+ <select class="form-input" id="fb-qty">
  <option value="1">Create Facebook</option>
  <option value="2">Marktplace</option>
  <option value="3">Id verify</option>
