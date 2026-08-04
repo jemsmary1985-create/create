@@ -329,19 +329,28 @@ window.updateHelpCenterUrl = async function() {
 function subscribeNotifications() {
  if (!currentUser) return;
  if (unsubscribeNotifications) unsubscribeNotifications();
+ // NOTE: Removed orderBy('createdAt') to avoid requiring a Firestore composite index.
+ // Sorting is done client-side instead.
  const q = query(
  collection(db, 'notifications'),
  where('uid', '==', currentUser.uid),
- orderBy('createdAt', 'desc'),
  limit(50)
   );
  unsubscribeNotifications = onSnapshot(q, (snap) => {
  const prevLatestId = notifications[0]?.id;
- notifications = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+ // Sort client-side: newest first
+ notifications = snap.docs
+   .map(d => ({ id: d.id, ...d.data() }))
+   .sort((a, b) => {
+     const ta = a.createdAt?.toMillis?.() ?? a.createdAt?.seconds * 1000 ?? 0;
+     const tb = b.createdAt?.toMillis?.() ?? b.createdAt?.seconds * 1000 ?? 0;
+     return tb - ta;
+   });
     // Toast for a brand-new notification that just arrived (not on initial load)
  if (prevLatestId !== undefined && notifications[0] && notifications[0].id !== prevLatestId && notifications[0].read === false) {
  const n = notifications[0];
  showToast(n.title || 'New notification', 'success');
+ playTing();
     }
  renderNotifications();
   }, (err) =>console.warn('Notifications listener error:', err.message));
@@ -375,6 +384,39 @@ function renderNotifications() {
       ${n.read ? '' : `<button class="notif-dismiss" onclick="markNotificationRead('${n.id}')" title="Mark as read"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>`}
  </div>`;
   }).join('');
+}
+
+window.clearAllNotifications = async function() {
+ if (!notifications.length) return;
+ if (!confirm('Clear all notifications?')) return;
+ try {
+   await Promise.all(notifications.map(n => deleteDoc(doc(db, 'notifications', n.id))));
+   showToast('Notifications cleared.', 'success');
+ } catch(e) { showToast('Error clearing: ' + e.message, 'error'); }
+};
+
+// ── NOTIFICATION / OTP SOUND ──
+function playTing() {
+ try {
+   const ctx = new (window.AudioContext || window.webkitAudioContext)();
+   // First tone
+   const o1 = ctx.createOscillator();
+   const g1 = ctx.createGain();
+   o1.connect(g1); g1.connect(ctx.destination);
+   o1.type = 'sine'; o1.frequency.setValueAtTime(880, ctx.currentTime);
+   g1.gain.setValueAtTime(0.4, ctx.currentTime);
+   g1.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+   o1.start(ctx.currentTime); o1.stop(ctx.currentTime + 0.4);
+   // Second tone (higher, slightly delayed)
+   const o2 = ctx.createOscillator();
+   const g2 = ctx.createGain();
+   o2.connect(g2); g2.connect(ctx.destination);
+   o2.type = 'sine'; o2.frequency.setValueAtTime(1320, ctx.currentTime + 0.12);
+   g2.gain.setValueAtTime(0, ctx.currentTime);
+   g2.gain.setValueAtTime(0.35, ctx.currentTime + 0.12);
+   g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.55);
+   o2.start(ctx.currentTime + 0.12); o2.stop(ctx.currentTime + 0.55);
+ } catch(e) { /* AudioContext not available */ }
 }
 
 window.markNotificationRead = async function(id) {
@@ -904,6 +946,7 @@ async function fetchOTP(phone, pid, service, serial, account) {
  histEntry.otp = otp; histEntry.status = 'received';
  saveState(); renderHistory();
  showToast(`OTP received — ${phone}: ${otp}`, 'success');
+ playTing();
  copyText(otp, false);
         // Stop polling
  if (refreshTimers[key]) { clearInterval(refreshTimers[key]); delete refreshTimers[key]; }
@@ -2242,7 +2285,7 @@ body.light-mode .theme-toggle-knob{left:27px}
      <option value="521">PID 0521 — $0.17</option>
    </select>
  </div>
- <div class="cost-chip" id="fb-cost-chip">$0.17 per number</div>
+ 
  <div style="font-size:11px;color:var(--text2);margin-bottom:10px;padding:6px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
  selects the best PID.
  </div>
@@ -2282,7 +2325,7 @@ body.light-mode .theme-toggle-knob{left:27px}
      <option value="528">PID 0528 — $0.47</option>
    </select>
  </div>
- <div class="cost-chip" id="wa-cost-chip">$0.47 per number</div>
+ 
  <div style="font-size:11px;color:var(--text2);margin-bottom:10px;padding:6px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
  selects the best PID.
  </div>
@@ -2297,9 +2340,12 @@ body.light-mode .theme-toggle-knob{left:27px}
  <div class="active-panel">
  <div class="active-panel-title">
  <span>Notifications <span id="notif-unread-badge" class="notif-badge" style="display:none">0</span></span>
+ <div style="display:flex;gap:6px">
+ <button class="btn-outline" style="padding:5px 10px;font-size:11px;color:var(--red);border-color:rgba(244,63,94,0.3)" onclick="clearAllNotifications()">Clear</button>
  <button class="btn-outline" style="padding:5px 10px;font-size:11px" onclick="markAllNotificationsRead()">Mark all read</button>
  </div>
- <div id="notif-list"><div class="empty-hint">No notifications yet.</div></div>
+ </div>
+ <div id="notif-list" style="max-height:240px;overflow-y:auto;padding-right:2px"><div class="empty-hint">No notifications yet. Bonuses and messages from admin will show up here.</div></div>
  </div>
 
  <!-- History Table -->
@@ -2384,7 +2430,7 @@ body.light-mode .theme-toggle-knob{left:27px}
  <div class="divider"></div>
  <label class="form-label">Payment TrxID</label>
  <input type="text" class="form-input" id="bkash-txnid" placeholder="e.g. 8C5GH2XVYA" style="margin-bottom:10px" autocomplete="off">
- <label class="form-label">Your account Number</label>
+ <label class="form-label">Your Acount Number</label>
  <input type="tel" class="form-input" id="bkash-phone" placeholder="Your Number Here" style="margin-bottom:14px" autocomplete="tel">
 
  <label class="form-label">Payment Screenshot (proof)</label>
@@ -2552,7 +2598,7 @@ body.light-mode .theme-toggle-knob{left:27px}
  </div>
  <div style="overflow-x:auto">
  <table class="tbl">
- <thead><tr><th>Date</th><th>Name</th><th>Email</th><th>USD</th><th>BDT+Fee</th><th>Total BDT</th><th>TrxID</th><th>A/C number</th><th>Screenshot</th><th>Status</th><th>Action</th></tr></thead>
+ <thead><tr><th>Date</th><th>Name</th><th>Email</th><th>USD</th><th>BDT+Fee</th><th>Total BDT</th><th>TrxID</th><th>bKash</th><th>Screenshot</th><th>Status</th><th>Action</th></tr></thead>
  <tbody id="admin-recharge-tbody"><tr class="empty-row"><td colspan="11">Loading…</td></tr></tbody>
  </table>
  </div>
