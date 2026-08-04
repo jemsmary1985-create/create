@@ -489,22 +489,20 @@ function renderPidPriceChips() {
  // Update fb PID select options with prices
  const fbSel = document.getElementById('fb-pid-select');
  if (fbSel) {
-   const options = [{ value:'', label:'Auto (best available)' }];
-   FB_PIDS.forEach(pid => {
-     const price = PID_PRICING[String(pid)] ? PID_PRICING[String(pid)].toFixed(2) : (PRICING.fb.toFixed(2));
-     options.push({ value: String(pid), label: `PID ${String(pid).padStart(4,'0')} — $${price}` });
-   });
    const cur = fbSel.value;
+   const options = FB_PIDS.map(pid => {
+     const price = PID_PRICING[String(pid)] ? PID_PRICING[String(pid)].toFixed(2) : (PRICING.fb.toFixed(2));
+     return { value: String(pid), label: `PID ${String(pid).padStart(4,'0')} — $${price}` };
+   });
    fbSel.innerHTML = options.map(o => `<option value="${o.value}"${o.value===cur?' selected':''}>${o.label}</option>`).join('');
  }
  const waSel = document.getElementById('wa-pid-select');
  if (waSel) {
-   const options = [{ value:'', label:'Auto (best available)' }];
-   WA_PIDS.forEach(pid => {
-     const price = PID_PRICING[String(pid)] ? PID_PRICING[String(pid)].toFixed(2) : (PRICING.wa.toFixed(2));
-     options.push({ value: String(pid), label: `PID ${String(pid).padStart(4,'0')} — $${price}` });
-   });
    const cur = waSel.value;
+   const options = WA_PIDS.map(pid => {
+     const price = PID_PRICING[String(pid)] ? PID_PRICING[String(pid)].toFixed(2) : (PRICING.wa.toFixed(2));
+     return { value: String(pid), label: `PID ${String(pid).padStart(4,'0')} — $${price}` };
+   });
    waSel.innerHTML = options.map(o => `<option value="${o.value}"${o.value===cur?' selected':''}>${o.label}</option>`).join('');
  }
 }
@@ -656,10 +654,17 @@ async function getNumberSmartly(service, qty, serial, preferredPid) {
  const accounts = [_DC, _DC2];
  const params = { cuy: 'us', num: qty, noblack: 1, serial };
 
+ // Track PIDs that hit their global upper limit (200408) — skip them on all accounts
+ const exhaustedPids = new Set();
+
  // Try ALL PIDs on account1 before touching account2
  for (const account of accounts) {
    let accountHadError = false;
    for (const pid of pids) {
+     if (exhaustedPids.has(pid)) {
+       console.warn(`PID ${pid} already at upper limit — skipping on ${account.n}`);
+       continue;
+     }
      try {
        const res = await durianCallWith(account, 'getMobile', { pid, ...params });
        // code 200 with data = success
@@ -670,13 +675,19 @@ async function getNumberSmartly(service, qty, serial, preferredPid) {
            return { res, pid, account };
          }
        }
-       // code 906 = number list empty, try next PID
+       // code 200408 = PID has reached upper limit for the day/session — skip this PID on all accounts
+       if (res?.code === 200408) {
+         console.warn(`PID ${pid} has reached its upper limit (200408) — marking exhausted globally`);
+         exhaustedPids.add(pid);
+         continue;
+       }
        // code 403 = insufficient credits for this account → skip to next account entirely
        if (res?.code === 403) {
          console.warn(`Account ${account.n} has insufficient credits — switching account`);
          accountHadError = true;
          break;
        }
+       // code 906 = number list empty, try next PID
        console.warn(`PID ${pid} on ${account.n}: code=${res?.code} msg=${res?.msg} — trying next PID`);
      } catch(e) {
        console.warn(`PID ${pid} on ${account.n} threw: ${e.message} — trying next PID`);
@@ -685,6 +696,12 @@ async function getNumberSmartly(service, qty, serial, preferredPid) {
      if (preferredPid && pid === preferredPid) break;
    }
    if (accountHadError) continue; // already broke out of PID loop; try next account
+ }
+
+ // Give a useful error message based on what happened
+ const allExhausted = pids.every(p => exhaustedPids.has(p));
+ if (allExhausted) {
+   throw new Error('All PIDs have reached their daily upper limit. Please try again tomorrow or contact admin.');
  }
  throw new Error('No numbers available from any PID or account. Please try again later.');
 }
@@ -2139,7 +2156,7 @@ body.light-mode .theme-toggle-knob{left:27px}
  <span class="nav-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg></span>Get Numbers
  </button>
  <button class="nav-btn" data-page="recharge" onclick="navigate('recharge')">
- <span class="nav-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg></span>Recharge (bKash)
+ <span class="nav-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg></span>Recharge/Topup
  </button>
  <button class="nav-btn" data-page="admin" id="nav-admin" onclick="navigate('admin')" style="display:none">
  <span class="nav-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></svg></span>Admin Panel
@@ -2220,7 +2237,6 @@ body.light-mode .theme-toggle-knob{left:27px}
  <div class="form-group" style="margin-bottom:10px">
    <label class="form-label">Select PID <span style="color:var(--text2);font-weight:400">(optional)</span></label>
    <select class="form-input" id="fb-pid-select" onchange="updateFbCostChip()">
-     <option value="">Auto (best available)</option>
      <option value="13">PID 0013 — $0.17</option>
      <option value="544">PID 0544 — $0.17</option>
      <option value="521">PID 0521 — $0.17</option>
@@ -2228,7 +2244,7 @@ body.light-mode .theme-toggle-knob{left:27px}
  </div>
  <div class="cost-chip" id="fb-cost-chip">$0.17 per number</div>
  <div style="font-size:11px;color:var(--text2);margin-bottom:10px;padding:6px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
- Auto-selects best PID unless you pick one above. Each API account tried separately.
+ selects the best PID.
  </div>
  <button class="btn-primary fb-btn" onclick="getNumber('fb')" id="fb-btn">Get Number</button>
  <div class="result-box" id="fb-result"></div>
@@ -2261,7 +2277,6 @@ body.light-mode .theme-toggle-knob{left:27px}
  <div class="form-group" style="margin-bottom:10px">
    <label class="form-label">Select PID <span style="color:var(--text2);font-weight:400">(optional)</span></label>
    <select class="form-input" id="wa-pid-select" onchange="updateWaCostChip()">
-     <option value="">Auto (best available)</option>
      <option value="6058">PID 6058 — $0.47</option>
      <option value="107">PID 0107 — $0.47</option>
      <option value="528">PID 0528 — $0.47</option>
@@ -2269,7 +2284,7 @@ body.light-mode .theme-toggle-knob{left:27px}
  </div>
  <div class="cost-chip" id="wa-cost-chip">$0.47 per number</div>
  <div style="font-size:11px;color:var(--text2);margin-bottom:10px;padding:6px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
- Auto-selects best PID unless you pick one above. Each API account tried separately.
+ selects the best PID.
  </div>
  <button class="btn-primary wa-btn" onclick="getNumber('wa')" id="wa-btn">Get Number</button>
  <div class="result-box" id="wa-result"></div>
@@ -2284,7 +2299,7 @@ body.light-mode .theme-toggle-knob{left:27px}
  <span>Notifications <span id="notif-unread-badge" class="notif-badge" style="display:none">0</span></span>
  <button class="btn-outline" style="padding:5px 10px;font-size:11px" onclick="markAllNotificationsRead()">Mark all read</button>
  </div>
- <div id="notif-list"><div class="empty-hint">No notifications yet. Bonuses and messages from admin will show up here.</div></div>
+ <div id="notif-list"><div class="empty-hint">No notifications yet.</div></div>
  </div>
 
  <!-- History Table -->
@@ -2367,9 +2382,9 @@ body.light-mode .theme-toggle-knob{left:27px}
  </div>
 
  <div class="divider"></div>
- <label class="form-label">bKash TrxID</label>
+ <label class="form-label">Payment TrxID</label>
  <input type="text" class="form-input" id="bkash-txnid" placeholder="e.g. 8C5GH2XVYA" style="margin-bottom:10px" autocomplete="off">
- <label class="form-label">Your bKash Number</label>
+ <label class="form-label">Your account Number</label>
  <input type="tel" class="form-input" id="bkash-phone" placeholder="Your Number Here" style="margin-bottom:14px" autocomplete="tel">
 
  <label class="form-label">Payment Screenshot (proof)</label>
@@ -2537,7 +2552,7 @@ body.light-mode .theme-toggle-knob{left:27px}
  </div>
  <div style="overflow-x:auto">
  <table class="tbl">
- <thead><tr><th>Date</th><th>Name</th><th>Email</th><th>USD</th><th>BDT+Fee</th><th>Total BDT</th><th>TrxID</th><th>bKash</th><th>Screenshot</th><th>Status</th><th>Action</th></tr></thead>
+ <thead><tr><th>Date</th><th>Name</th><th>Email</th><th>USD</th><th>BDT+Fee</th><th>Total BDT</th><th>TrxID</th><th>A/C number</th><th>Screenshot</th><th>Status</th><th>Action</th></tr></thead>
  <tbody id="admin-recharge-tbody"><tr class="empty-row"><td colspan="11">Loading…</td></tr></tbody>
  </table>
  </div>
